@@ -6,12 +6,21 @@ from typing import Literal
 from attrs import define, field
 from Bio.Seq import MutableSeq
 from biocommons.seqrepo import SeqRepo
-from hgvs import posedit
 from hgvs.exceptions import HGVSParseError
 from hgvs.parser import Parser
 from hgvs.sequencevariant import SequenceVariant
 
 sr_dir = "/home/shannc/Bio_SDD/stem_synology/chula_mount/shannc/repos/evo2_fine_tune/seqrepo/2024-12-20/"
+
+
+def ends(v: SequenceVariant) -> tuple[int, int]:
+    return v.posedit.pos.start, v.posedit.pos.end
+
+
+# TODO: check out
+# https://github.com/biocommons/hgvs/blob/82500b8f5c9f08a44094096dac9457606735205b/src/hgvs/utils/altseqbuilder.py
+# the class is mainly used for HGVSc to HGVSp conversion, so you would
+# need to modify it. But good to reference it to check for edge cases
 
 
 @define
@@ -26,8 +35,8 @@ class VariantGenerator:
             namespace = "ensembl"
         return MutableSeq(self.sr.fetch(name, namespace=namespace))
 
-    def _validate_var(self, var: SequenceVariant) -> None:
-        if var.type not in {"c", "g"} and self.seqtype == "dna":
+    def _validate_var(self, v: SequenceVariant) -> None:
+        if v.type not in {"c", "g"} and self.seqtype == "dna":
             raise ValueError(
                 "Can only generate DNA variants from HGVSg or HGVSc strings"
             )
@@ -36,7 +45,7 @@ class VariantGenerator:
         """For HGVSg variants, extract the gene subsequence"""
         raise NotImplementedError()
 
-    def gen_repeat(self, gene: str, hgvs: str):
+    def gen_repeat(self, id: str, hgvs: str):
         raise NotImplementedError()
 
     def gen_del(self, id: str, v: SequenceVariant) -> str:
@@ -46,18 +55,30 @@ class VariantGenerator:
         pass
 
     def gen_ins(self, id: str, v: SequenceVariant) -> str:
+        seq: MutableSeq = self.lookup(id)
+        pos = ends(v)
         pass
 
-    def gen_sub(self, id: str, v: SequenceVariant) -> str:
-        seq: MutableSeq = self.lookup(id)
-        pos = v.posedit.pos.start.base
-        ref = seq[pos]
+    def _check_ref(
+        self, seq: MutableSeq, pos: tuple[int, int], v: SequenceVariant, type: str
+    ):
         v_ref = v.posedit.edit.ref
+        # BUG: you need to check the indexing for these
+        if type == "sub":
+            # HGVS are 1-indexed
+            ref = seq[pos[0] + 1]
+        else:
+            ref = seq[pos[0] - 1 : pos[1]]
         if ref != v_ref:
             print(
                 f"WARNING: ref {v_ref} in variant `{v}` doesn't match ref {ref} in sequence"
             )
-        seq[pos] = v.posedit.edit.alt
+
+    def gen_sub(self, id: str, v: SequenceVariant) -> str:
+        seq: MutableSeq = self.lookup(id)
+        pos = ends(v)
+        self._check_ref(seq, pos, v, "sub")
+        seq[pos[0]] = v.posedit.edit.alt
         return str(id)
 
     def gen(self, id: str, hgvs: str) -> str:
