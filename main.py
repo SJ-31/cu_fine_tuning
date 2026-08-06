@@ -1,4 +1,5 @@
-#!/usr/bin/env ipython
+#!/usr/bin/env python3
+
 
 import os
 from typing import Literal
@@ -10,11 +11,10 @@ from hgvs.exceptions import HGVSParseError
 from hgvs.parser import Parser
 from hgvs.sequencevariant import SequenceVariant
 
-sr_dir = "/home/shannc/Bio_SDD/stem_synology/chula_mount/shannc/repos/evo2_fine_tune/seqrepo/2024-12-20/"
-
 
 def ends(v: SequenceVariant) -> tuple[int, int]:
-    return v.posedit.pos.start, v.posedit.pos.end
+    # HGVS syntax is 1-indexed
+    return v.posedit.pos.start.base - 1, v.posedit.pos.end.base - 1
 
 
 # TODO: check out
@@ -36,7 +36,7 @@ class VariantGenerator:
         return MutableSeq(self.sr.fetch(name, namespace=namespace))
 
     def _validate_var(self, v: SequenceVariant) -> None:
-        if v.type not in {"c", "g"} and self.seqtype == "dna":
+        if v.type not in {"c", "g", "n"} and self.seqtype == "dna":
             raise ValueError(
                 "Can only generate DNA variants from HGVSg or HGVSc strings"
             )
@@ -63,12 +63,10 @@ class VariantGenerator:
         self, seq: MutableSeq, pos: tuple[int, int], v: SequenceVariant, type: str
     ):
         v_ref = v.posedit.edit.ref
-        # BUG: you need to check the indexing for these
         if type == "sub":
-            # HGVS are 1-indexed
-            ref = seq[pos[0] + 1]
+            ref = seq[pos[0]]
         else:
-            ref = seq[pos[0] - 1 : pos[1]]
+            ref = seq[pos[0] : pos[1]]
         if ref != v_ref:
             print(
                 f"WARNING: ref {v_ref} in variant `{v}` doesn't match ref {ref} in sequence"
@@ -79,7 +77,7 @@ class VariantGenerator:
         pos = ends(v)
         self._check_ref(seq, pos, v, "sub")
         seq[pos[0]] = v.posedit.edit.alt
-        return str(id)
+        return str(seq)
 
     def gen(self, id: str, hgvs: str) -> str:
         try:
