@@ -1,26 +1,152 @@
 #!/usr/bin/env python3
 
+from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import Literal
 
-from attrs import define, field
-from Bio.Seq import MutableSeq
+import duckdb
+import polars as pl
+from attrs import Factory, define, field
+from Bio.Seq import MutableSeq, Seq
 from biocommons.seqrepo import SeqRepo
 from hgvs.exceptions import HGVSParseError
+from hgvs.location import BaseOffsetPosition
 from hgvs.parser import Parser
 from hgvs.sequencevariant import SequenceVariant
 
 
+@define
+class Sequence:
+    """Class representing a mutable transcript, which indexes
+    relative to the start codon, following the HGVS numbering system
+    """
+
+    # TODO: add methods for slicing, setting elements
+
+    s: MutableSeq
+    five_p: int | None
+    three_p: int | None
+    start_codon: int  # 0-based index of the first base of the start codon
+    stop_codon: int  # 0-based index of the last base of the stop codon
+    relative_to: Literal["start", "stop"] = "start"
+
+    def _shift_index(self, i: int | slice) -> int | slice:
+        if i == 0:
+            raise ValueError("Base index of 0 is not defined")
+        offset = self.start_codon if self.relative_to == "start" else self.stop_codon
+        if isinstance(i, int):
+            return offset + i - 1
+        return slice(offset + i.start - 1, offset + i.stop - 1, i.step)
+
+    def __setitem__(self, i: int, base: str):
+        self.s[self._shift_index(i)] = base
+
+    def __getitem__(self, i: int | slice) -> Seq | str:
+        return self.s[self._shift_index(i)]
+
+    @classmethod
+    def new(
+        cls,
+        cds: str,
+        five_p: str | None = None,
+        three_p: str | None = None,
+        relative_to: Literal["start", "stop"] = "start",
+    ):
+        if cds[:3].upper() != "ATG":
+            print("WARNING: CDS has no start codon")
+        if cds[-3:].upper() not in {"TAG", "TGA", "TAA"}:
+            print("WARNING: CDS has no stop codon")
+        fp, tp = None, None
+        start_codon, stop_codon = 0, len(cds) - 1
+        if not five_p and not three_p:
+            seq = MutableSeq(cds)
+        elif not five_p and three_p:
+            seq = MutableSeq(cds + three_p)
+            tp = len(cds)
+        elif not three_p and five_p:
+            seq = MutableSeq(five_p + cds)
+            fp = 0
+            start_codon = len(five_p)
+        elif three_p and five_p:
+            seq = MutableSeq(five_p + cds + three_p)
+            fp, start_codon, tp = 0, len(five_p), len(cds)
+        return cls(
+            s=seq,
+            five_p=fp,
+            three_p=tp,
+            start_codon=start_codon,
+            stop_codon=stop_codon,
+            relative_to=relative_to,
+        )
+
+    def __str__(self) -> str:
+        return str(self.s)
+
+
+@define
+class SeqDB:
+    file: Path
+    aliases: dict[str, dict[str, str]] = field(factory=dict)
+    db: duckdb.DuckDBPyConnection = field(
+        init=False, default=Factory(lambda x: duckdb.connect(x.file), takes_self=True)
+    )
+
+    def set_aliases(
+        self, mapping: pl.DataFrame, id_col: str, alias_col: str, namespace: str
+    ):
+        mapping = mapping.filter(
+            (pl.col(id_col).is_not_null()) & (pl.col(alias_col).is_not_null())
+        )
+        self.aliases[namespace] = dict(zip(mapping[id_col], mapping[alias_col]))
+
+    def fetch(self, id: str, namespace: str | None = None) -> Sequence:
+        if namespace is not None:
+            id = self.aliases[namespace][id]
+        five_p, three_p, cds = self.db.execute(
+            """
+        SELECT  5p_utr, 3p_utr, cds FROM t WHERE id == ?
+        """,
+            [id],
+        )
+
+    def __attrs_post_init__(self):
+        if not self.file.exists():
+            self.db.sql("""
+            CREATE TABLE t (id PRIMARY_KEY VARCHAR,
+            5p_utr VARCHAR,
+            3p_utr VARCHAR,
+            cds VARCHAR
+            )
+            """)
+
+
+class VariantUnsupportedError(Exception):
+    pass
+
+
+def get_pos(p: BaseOffsetPosition) -> int:
+    offset = p.offset
+    if offset == 0:
+        # HGVS syntax is 1-indexed
+        return p.base - 1
+    raise VariantUnsupportedError(
+        "Can only generate intron variants with g. definitions"
+    )
+
+
 def ends(v: SequenceVariant) -> tuple[int, int]:
-    # HGVS syntax is 1-indexed
-    return v.posedit.pos.start.base - 1, v.posedit.pos.end.base - 1
+    return get_pos(v.posedit.pos.start), get_pos(v.posedit.pos.end)
 
 
 # TODO: check out
 # https://github.com/biocommons/hgvs/blob/82500b8f5c9f08a44094096dac9457606735205b/src/hgvs/utils/altseqbuilder.py
 # the class is mainly used for HGVSc to HGVSp conversion, so you would
 # need to modify it. But good to reference it to check for edge cases
+
+# TODO: cause the RefSeq sequences contain the UTRs, and HGVS numbers
+# from the start codon, need to identify them
 
 
 @define
@@ -36,8 +162,10 @@ class VariantGenerator:
         return MutableSeq(self.sr.fetch(name, namespace=namespace))
 
     def _validate_var(self, v: SequenceVariant) -> None:
+        if v.type == "g":
+            raise VariantUnsupportedError("Cannot generate from HGVSg")
         if v.type not in {"c", "g", "n"} and self.seqtype == "dna":
-            raise ValueError(
+            raise VariantUnsupportedError(
                 "Can only generate DNA variants from HGVSg or HGVSc strings"
             )
 
