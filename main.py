@@ -60,8 +60,11 @@ class Sequence:
     def __getitem__(self, i: int | slice) -> Seq | str:
         return self.s[self._shift_index(i)]
 
-    def insert(self, i, c):
-        return self.s.insert(self._shift_index(i), c)
+    def insert(self, i, s):
+        if len(s) == 1:
+            return self.s.insert(self._shift_index(i), s)
+        for char in s[::-1]:
+            self.s.insert(self._shift_index(i), char)
 
     def __delitem__(self, i: int | slice):
         del self.s[self._shift_index(i)]
