@@ -2,7 +2,9 @@
 
 import sys
 
+import gffutils
 import polars as pl
+import pyfaidx
 import pytest
 from biocommons.seqrepo import SeqRepo
 from hgvs.parser import Parser
@@ -14,8 +16,12 @@ import main as m
 DATA = here("data")
 
 SR: SeqRepo = SeqRepo(DATA / "seqrepo/2024-12-20/")
+DB = DATA / "GCF_000001405.40.db"
 
-sr_dir = "/home/shannc/Bio_SDD/stem_synology/chula_mount/shannc/repos/evo2_fine_tune/seqrepo/2024-12-20/"
+# TODO: record creation as
+# db = gffutils.create_db(
+#     gff, data / "GCF_000001405.40.db", merge_strategy="create_unique", force=True
+# )
 
 HP = Parser()
 
@@ -30,8 +36,46 @@ NR_104088.1     RNU6-8     -1         GTGCTCGCTTCGGCAGCACATATACTAAAATTGGAACGATAC
 snps = pl.read_csv(here("tests", "snps.csv"))
 
 
-@pytest.mark.parametrize("gene,hgvs,alt", list(snps.iter_rows()))
-def test_sub(gene, hgvs: str, alt: str):
-    G = m.VariantGenerator(sr=SR, parser=HP, seqtype="dna")
-    generated = G.gen(gene, hgvs)
-    assert alt == generated
+def test_seq_delete():
+    seq = m.Sequence.new("ATGAGACTAGACAGTGA", "fiveprime", "threeprime", "start")
+    old_stop = seq.stop_codon
+    old_start = seq.start_codon
+    assert seq[1] == "A"
+    del seq[2]
+    assert old_start == seq.start_codon
+    assert seq[2] == "G"
+    assert seq.stop_codon == old_stop - 1
+    del seq[2:5]
+    assert seq.stop_codon == old_stop - 1 - 3
+    assert str(seq[2:5]) == "ACT"
+
+
+def test_seq():
+    seq = m.Sequence.new("ATGAGACTAGACAGTGA", "fiveprime", "threeprime", "start")
+    assert seq[-1] == "e"
+    assert seq[1] == "A"
+    assert seq[3] == "G"
+    seq[1] = "G"
+    assert seq[1] == "G"
+    assert seq[1:3] == "GT"
+    seq.relative_to = "stop"
+    assert seq[1] == "t"
+    assert seq[2] == "h"
+    seq.insert(3, "inserted")
+    assert seq[3:11] == "inserted"
+    del seq[2:5]
+
+
+# TODO: [2026-08-06 Thu] will need to download the sequences with
+# NCBI's datasets, cause you can't risk finding the ORF manually.
+
+
+# @pytest.mark.parametrize("gene,hgvs,alt,supported", list(snps.iter_rows()))
+# def test_sub(gene, hgvs: str, alt: str, supported: bool):
+#     G = m.VariantGenerator(sr=SR, parser=HP, seqtype="dna")
+#     if supported:
+#         generated = G.gen(gene, hgvs)
+#         assert alt == generated
+#     else:
+#         with pytest.raises(m.VariantUnsupportedError):
+#             G.gen(gene, hgvs)
