@@ -60,14 +60,38 @@ class Sequence:
     def __getitem__(self, i: int | slice) -> Seq | str:
         return self.s[self._shift_index(i)]
 
+    def _adjust_indices(self, pos_change: int, change: int):
+        if pos_change < self.start_codon:
+            if self.start_codon != 0:
+                self.start_codon += change
+            self.stop_codon += change
+        elif pos_change < self.stop_codon:
+            self.stop_codon += change
+
     def insert(self, i, s):
+        def insert_char(i, c):
+            shifted = self._shift_index(i)
+            self._adjust_indices(shifted, 1)
+            self.s.insert(shifted, c)
+
         if len(s) == 1:
-            return self.s.insert(self._shift_index(i), s)
+            insert_char(i, s)
         for char in s[::-1]:
-            self.s.insert(self._shift_index(i), char)
+            insert_char(i, char)
 
     def __delitem__(self, i: int | slice):
-        del self.s[self._shift_index(i)]
+        def d(idx: int):
+            shifted: int = self._shift_index(idx)
+            del self.s[shifted]
+            self._adjust_indices(shifted, -1)
+
+        if isinstance(i, slice):
+            if i.stop <= i.start:
+                raise ValueError("Cannot delete with reversed indices")
+            for _ in range(i.start, i.stop):
+                d(i.start)
+        else:
+            d(i)
 
     @classmethod
     def new(
