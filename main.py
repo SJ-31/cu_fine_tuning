@@ -23,28 +23,48 @@ class Sequence:
     relative to the start codon, following the HGVS numbering system
     """
 
-    # TODO: add methods for slicing, setting elements
-
     s: MutableSeq
     five_p: int | None
     three_p: int | None
     start_codon: int  # 0-based index of the first base of the start codon
     stop_codon: int  # 0-based index of the last base of the stop codon
     relative_to: Literal["start", "stop"] = "start"
+    # Index relative to the start, stop codons. Use for
+    # Negative indices relative to start index into the 5' UTR
+    # Positive indices relative to stop index into 3' UTR
 
     def _shift_index(self, i: int | slice) -> int | slice:
         if i == 0:
             raise ValueError("Base index of 0 is not defined")
-        offset = self.start_codon if self.relative_to == "start" else self.stop_codon
+        elif (
+            (isinstance(i, int) and i <= 0) or (isinstance(i, slice) and i.start <= 0)
+        ) and self.relative_to == "stop":
+            raise ValueError(
+                "Negative indexing is not defined when relative to the stop codon"
+            )
+        offset = (
+            self.start_codon if self.relative_to == "start" else self.stop_codon + 1
+        )
         if isinstance(i, int):
+            if i < 0:
+                i += 1
             return offset + i - 1
-        return slice(offset + i.start - 1, offset + i.stop - 1, i.step)
+        start, stop = i.start, i.stop
+        if start < 0:
+            start += 1
+        return slice(offset + start - 1, offset + stop - 1, i.step)
 
     def __setitem__(self, i: int, base: str):
         self.s[self._shift_index(i)] = base
 
     def __getitem__(self, i: int | slice) -> Seq | str:
         return self.s[self._shift_index(i)]
+
+    def insert(self, i, c):
+        return self.s.insert(self._shift_index(i), c)
+
+    def __delitem__(self, i: int | slice):
+        del self.s[self._shift_index(i)]
 
     @classmethod
     def new(
@@ -69,9 +89,11 @@ class Sequence:
             seq = MutableSeq(five_p + cds)
             fp = 0
             start_codon = len(five_p)
+            stop_codon += len(five_p)
         elif three_p and five_p:
             seq = MutableSeq(five_p + cds + three_p)
             fp, start_codon, tp = 0, len(five_p), len(cds)
+            stop_codon += len(five_p)
         return cls(
             s=seq,
             five_p=fp,
