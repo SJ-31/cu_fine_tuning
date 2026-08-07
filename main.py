@@ -229,6 +229,47 @@ class SeqDB:
                 result[k] = str(seqlist[0].seq)
         return result
 
+    @property
+    def seen_ids(self) -> set:
+        return {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
+
+    def add_refseq_transcript(
+        self,
+        id: str,
+        sr: SeqRepo,
+        mapping_key: str | None = "ensembl",
+        lookup: dict | None = None,
+    ) -> tuple[bool, str | None]:
+        if not lookup and mapping_key:
+            lookup = self.aliases.get(mapping_key)
+        if id.startswith("ENST") and lookup:
+            if id not in lookup:
+                return False, "could not map from Ensembl to RefSeq"
+            else:
+                id = lookup[id]
+        elif id.startswith("NR_"):
+            fp, tp, cds = "", "", ""
+            try:
+                full = sr.fetch(id)
+            except KeyError:
+                return False, "not found in SeqRepo"
+        elif id.startswith("NM_"):
+            try:
+                downloaded = self.download(id)
+                fp = downloaded.get("5p_utr", "")
+                tp = downloaded.get("3p_utr", "")
+                cds = downloaded.get("cds")
+                full = ""
+                if not cds:
+                    return False, "no CDS could be downloaded with datasets"
+            except sp.CalledProcessError:
+                return False, "datasets raised CalledProcessError"
+        else:
+            return False, "unsupported prefix"
+        to_insert = [id, fp, tp, cds, full]
+        self.db.execute("INSERT INTO t VALUES (?, ?, ?, ?, ?)", to_insert)
+        return True, None
+
     def add_refseq_transcripts(
         self, ids: list[str], sr: SeqRepo, mapping_key: str | None = "ensembl"
     ) -> dict[str, str]:
@@ -261,41 +302,19 @@ class SeqDB:
             lookup = {}
         failed = {}
         ids = list(set(ids))
-        previous = {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
+        seen = self.seen_ids
         for id in ids:  # Save each id individually in case of network errors
-            if id in previous:
-                continue
-            elif id.startswith("ENST") and lookup:
+            if id.startswith("ENST") and lookup:
                 if id not in lookup:
                     failed[id] = "could not map from Ensembl to RefSeq"
                     continue
                 else:
                     id = lookup[id]
-            elif id.startswith("NR_"):
-                fp, tp, cds = "", "", ""
-                try:
-                    full = sr.fetch(id)
-                except KeyError:
-                    failed[id] = "not found in SeqRepo"
-                    continue
-            elif id.startswith("NM_"):
-                try:
-                    downloaded = self.download(id)
-                    fp = downloaded.get("5p_utr", "")
-                    tp = downloaded.get("3p_utr", "")
-                    cds = downloaded.get("cds")
-                    full = ""
-                    if not cds:
-                        failed[id] = "no CDS could be downloaded with datasets"
-                        continue
-                except sp.CalledProcessError:
-                    failed[id] = "datasets raised CalledProcessError"
-                    continue
-            else:
-                failed[id] = "unsupported prefix"
+            if id in seen:
                 continue
-            to_insert = [id, fp, tp, cds, full]
-            self.db.execute("INSERT INTO t VALUES (?, ?, ?, ?, ?)", to_insert)
+            added, comment = self.add_refseq_transcript(id, sr=sr, lookup=lookup)
+            if not added:
+                failed[id] = comment
         return failed
 
     def fetch_transcript(self, id: str, namespace: str | None = None) -> Transcript:
@@ -361,15 +380,15 @@ def ends(v: SequenceVariant) -> tuple[int, int]:
 
 @define
 class VariantGenerator:
-    sr: SeqRepo
+    db: SeqDB
     parser: Parser = field(factory=Parser)
     seqtype: Literal["aa", "dna"] = "dna"
 
-    def lookup(self, name: str) -> MutableSeq:
+    def lookup(self, name: str) -> Transcript:
         namespace = None
         if name.startswith("ENS"):
             namespace = "ensembl"
-        return MutableSeq(self.sr.fetch(name, namespace=namespace))
+        return self.db.fetch_transcript(name, namespace=namespace)
 
     def _validate_var(self, v: SequenceVariant) -> None:
         if v.type == "g":
@@ -393,12 +412,12 @@ class VariantGenerator:
         pass
 
     def gen_ins(self, id: str, v: SequenceVariant) -> str:
-        seq: MutableSeq = self.lookup(id)
+        seq: Transcript = self.lookup(id)
         pos = ends(v)
         pass
 
     def _check_ref(
-        self, seq: MutableSeq, pos: tuple[int, int], v: SequenceVariant, type: str
+        self, seq: Transcript, pos: tuple[int, int], v: SequenceVariant, type: str
     ):
         v_ref = v.posedit.edit.ref
         if type == "sub":
@@ -411,7 +430,7 @@ class VariantGenerator:
             )
 
     def gen_sub(self, id: str, v: SequenceVariant) -> str:
-        seq: MutableSeq = self.lookup(id)
+        seq: Transcript = self.lookup(id)
         pos = ends(v)
         self._check_ref(seq, pos, v, "sub")
         seq[pos[0]] = v.posedit.edit.alt

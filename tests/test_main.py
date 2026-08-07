@@ -30,9 +30,19 @@ EXTRA = {
 }
 SNPS = pl.read_csv(here("tests", "snps.csv"))
 DOWNLOADS = pl.scan_csv(here("tests", "download_test.csv"))
+IDS = [
+    "NR_023317.1",
+    "NR_104088.1",
+    "NM_052951.3",
+    "NM_001172655.1",
+    "fail",
+    "NR_fail",
+    "NM_fail",
+]
 
 
-def test_seqdb(tmp_path):
+@pytest.fixture
+def default_db(tmp_path):
     db_file = tmp_path / "seqs.db"
     db = m.SeqDB(file=db_file)
     db.set_aliases(
@@ -41,25 +51,21 @@ def test_seqdb(tmp_path):
         alias_col="Transcript stable ID version",
         namespace="ensembl",
     )
+    return db
+
+
+def test_seqdb(default_db):
+    db = default_db
     lookup = DOWNLOADS.collect().rows_by_key("id", unique=True, named=True)
-    ids = [
-        "NR_023317.1",
-        "NR_104088.1",
-        "NM_052951.3",
-        "NM_001172655.1",
-        "fail",
-        "NR_fail",
-        "NM_fail",
-    ]
-    failed = db.add_refseq_transcripts(ids, sr=SR)
+    failed = db.add_refseq_transcripts(IDS, sr=SR)
     assert "fail" in failed
     assert "NR_fail" in failed
     assert "NM_fail" in failed
-    assert db.fetch(ids[0])["full"] == EXTRA[ids[0]]
-    assert db.fetch(ids[1])["full"] == EXTRA[ids[1]]
+    assert db.fetch(IDS[0])["full"] == EXTRA[IDS[0]]
+    assert db.fetch(IDS[1])["full"] == EXTRA[IDS[1]]
     for key in ("5p_utr", "3p_utr", "cds"):
-        assert db.fetch(ids[2])[key] == lookup[ids[2]][key]
-        assert db.fetch(ids[3])[key] == lookup[ids[3]][key]
+        assert db.fetch(IDS[2])[key] == lookup[IDS[2]][key]
+        assert db.fetch(IDS[3])[key] == lookup[IDS[3]][key]
 
 
 @pytest.mark.parametrize("id", list(DOWNLOADS.collect()["id"]))
@@ -102,16 +108,13 @@ def test_seq():
     del seq[2:5]
 
 
-# TODO: [2026-08-06 Thu] will need to download the sequences with
-# NCBI's datasets, cause you can't risk finding the ORF manually.
-
-
-# @pytest.mark.parametrize("gene,hgvs,alt,supported", list(SNPS.iter_rows()))
-# def test_sub(gene, hgvs: str, alt: str, supported: bool):
-#     G = m.VariantGenerator(sr=SR, parser=HP, seqtype="dna")
-#     if supported:
-#         generated = G.gen(gene, hgvs)
-#         assert alt == generated
-#     else:
-#         with pytest.raises(m.VariantUnsupportedError):
-#             G.gen(gene, hgvs)
+@pytest.mark.parametrize("gene,hgvs,alt,supported", list(SNPS.iter_rows()))
+def test_sub(gene, hgvs: str, alt: str, supported: bool, default_db):
+    db = default_db
+    G = m.VariantGenerator(db=db, parser=HP, seqtype="dna")
+    if supported:
+        generated = G.gen(gene, hgvs)
+        assert alt == generated
+    else:
+        with pytest.raises(m.VariantUnsupportedError):
+            G.gen(gene, hgvs)
