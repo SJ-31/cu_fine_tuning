@@ -55,7 +55,7 @@ def default_db(tmp_path):
 
 
 def test_seqdb(default_db):
-    db = default_db
+    db: m.SeqDB = default_db
     lookup = DOWNLOADS.collect().rows_by_key("id", unique=True, named=True)
     failed = db.add_refseq_transcripts(IDS, sr=SR)
     assert "fail" in failed
@@ -66,6 +66,9 @@ def test_seqdb(default_db):
     for key in ("5p_utr", "3p_utr", "cds"):
         assert db.fetch(IDS[2])[key] == lookup[IDS[2]][key]
         assert db.fetch(IDS[3])[key] == lookup[IDS[3]][key]
+    add, _ = db.add_refseq_transcript(IDS[0], sr=SR, mapping_key="ensembl")
+    assert not add
+    assert db.seen == set(IDS)
 
 
 @pytest.mark.parametrize("id", list(DOWNLOADS.collect()["id"]))

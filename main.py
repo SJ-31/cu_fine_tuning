@@ -175,6 +175,7 @@ class SeqDB:
     db: duckdb.DuckDBPyConnection = field(
         init=False, default=Factory(lambda x: duckdb.connect(x.file), takes_self=True)
     )
+    seen: set = field(init=False, factory=set)
 
     def set_aliases(
         self, mapping: pl.DataFrame, id_col: str, alias_col: str, namespace: str
@@ -229,10 +230,6 @@ class SeqDB:
                 result[k] = str(seqlist[0].seq)
         return result
 
-    @property
-    def seen_ids(self) -> set:
-        return {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
-
     def add_refseq_transcript(
         self,
         id: str,
@@ -240,6 +237,19 @@ class SeqDB:
         mapping_key: str | None = "ensembl",
         lookup: dict | None = None,
     ) -> tuple[bool, str | None]:
+        """
+        Helper function to add RefSeq transcript into db
+
+        Returns
+        -------
+        tuple[bool, str]
+        The first element indicates whether `id` was added into `db`
+        If this is False, the second element is the reason why
+        """
+        if id not in self.seen:
+            self.seen.add(id)
+        else:
+            return False, "already in db"
         if not lookup and mapping_key:
             lookup = self.aliases.get(mapping_key)
         if id.startswith("ENST") and lookup:
@@ -269,6 +279,9 @@ class SeqDB:
         to_insert = [id, fp, tp, cds, full]
         self.db.execute("INSERT INTO t VALUES (?, ?, ?, ?, ?)", to_insert)
         return True, None
+
+    def __contains__(self, val: str) -> bool:
+        return val in self.seen
 
     def add_refseq_transcripts(
         self, ids: list[str], sr: SeqRepo, mapping_key: str | None = "ensembl"
@@ -302,15 +315,15 @@ class SeqDB:
             lookup = {}
         failed = {}
         ids = list(set(ids))
-        seen = self.seen_ids
         for id in ids:  # Save each id individually in case of network errors
             if id.startswith("ENST") and lookup:
                 if id not in lookup:
                     failed[id] = "could not map from Ensembl to RefSeq"
+                    self.seen.add(id)
                     continue
                 else:
                     id = lookup[id]
-            if id in seen:
+            if id in self.seen:
                 continue
             added, comment = self.add_refseq_transcript(id, sr=sr, lookup=lookup)
             if not added:
@@ -350,6 +363,8 @@ class SeqDB:
         );
             """)
 
+        self.seen |= {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
+
 
 class VariantUnsupportedError(Exception):
     pass
@@ -381,6 +396,7 @@ def ends(v: SequenceVariant) -> tuple[int, int]:
 @define
 class VariantGenerator:
     db: SeqDB
+    sr: SeqRepo
     parser: Parser = field(factory=Parser)
     seqtype: Literal["aa", "dna"] = "dna"
 
@@ -388,6 +404,10 @@ class VariantGenerator:
         namespace = None
         if name.startswith("ENS"):
             namespace = "ensembl"
+        if name not in self.db:
+            added, reason = self.db.add_refseq_transcript(name, sr=self.sr)
+            if not added:
+                raise ValueError(f"Sequence for `{name}` unavailable. Reason: {reason}")
         return self.db.fetch_transcript(name, namespace=namespace)
 
     def _validate_var(self, v: SequenceVariant) -> None:
