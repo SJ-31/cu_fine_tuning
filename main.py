@@ -18,22 +18,38 @@ from hgvs.sequencevariant import SequenceVariant
 
 
 @define
-class Sequence:
+class Transcript:
     """Class representing a mutable transcript, which indexes
     relative to the start codon, following the HGVS numbering system
+
+    Parameters
+    ----------
+    start : int
+        If `is_cds`, 0-based index of the first base of the start codon
+    Otherwise, 0 for the first base
+    end : int
+        If `is_cds`, the 0-based index of the last base of the stop codon
+    Otherwise, the index at the last base of the sequence
+    relative_to : Literal["start", "stop", None]
+    How to interpret indices, following HGVS numbering conventions
+    - Negative indices relative to start index into the 5' UTR
+    - Positive indices relative to stop index into 3' UTR
+    - Setting to None indexes directly into `self.s`
+    is_cds : bool
+        Whether `s` is a coding sequence
     """
 
     s: MutableSeq
     five_p: int | None
     three_p: int | None
-    start_codon: int  # 0-based index of the first base of the start codon
-    stop_codon: int  # 0-based index of the last base of the stop codon
-    relative_to: Literal["start", "stop"] = "start"
-    # Index relative to the start, stop codons. Use for
-    # Negative indices relative to start index into the 5' UTR
-    # Positive indices relative to stop index into 3' UTR
+    start: int
+    end: int
+    is_cds: bool
+    relative_to: Literal["start", "stop", None] = "start"
 
     def _shift_index(self, i: int | slice) -> int | slice:
+        if self.relative_to == "none":
+            return i
         if i == 0:
             raise ValueError("Base index of 0 is not defined")
         elif (
@@ -42,9 +58,7 @@ class Sequence:
             raise ValueError(
                 "Negative indexing is not defined when relative to the stop codon"
             )
-        offset = (
-            self.start_codon if self.relative_to == "start" else self.stop_codon + 1
-        )
+        offset = self.start if self.relative_to == "start" else self.end + 1
         if isinstance(i, int):
             if i < 0:
                 i += 1
@@ -61,17 +75,18 @@ class Sequence:
         return self.s[self._shift_index(i)]
 
     def _adjust_indices(self, pos_change: int, change: int):
-        if pos_change < self.start_codon:
-            if self.start_codon != 0:
-                self.start_codon += change
-            self.stop_codon += change
-        elif pos_change < self.stop_codon:
-            self.stop_codon += change
+        if pos_change < self.start:
+            if self.start != 0:
+                self.start += change
+            self.end += change
+        elif pos_change < self.end:
+            self.end += change
 
     def insert(self, i, s):
         def insert_char(i, c):
             shifted = self._shift_index(i)
-            self._adjust_indices(shifted, 1)
+            if self.is_cds:
+                self._adjust_indices(shifted, 1)
             self.s.insert(shifted, c)
 
         if len(s) == 1:
@@ -83,7 +98,10 @@ class Sequence:
         def d(idx: int):
             shifted: int = self._shift_index(idx)
             del self.s[shifted]
-            self._adjust_indices(shifted, -1)
+            if self.is_cds:
+                self._adjust_indices(shifted, -1)
+            else:
+                self.end = len(self.s) - 1
 
         if isinstance(i, slice):
             if i.stop <= i.start:
@@ -96,37 +114,48 @@ class Sequence:
     @classmethod
     def new(
         cls,
-        cds: str,
+        s: str,
         five_p: str | None = None,
         three_p: str | None = None,
-        relative_to: Literal["start", "stop"] = "start",
+        relative_to: Literal["start", "stop", None] = "start",
+        is_cds: bool = True,
     ):
-        if cds[:3].upper() != "ATG":
+        if not is_cds:
+            return cls(
+                s=MutableSeq(s),
+                start=0,
+                end=len(s) - 1,
+                five_p=None,
+                three_p=None,
+                is_cds=False,
+                relative_to=relative_to,
+            )
+        if s[:3].upper() != "ATG":
             print("WARNING: CDS has no start codon")
-        if cds[-3:].upper() not in {"TAG", "TGA", "TAA"}:
+        if s[-3:].upper() not in {"TAG", "TGA", "TAA"}:
             print("WARNING: CDS has no stop codon")
         fp, tp = None, None
-        start_codon, stop_codon = 0, len(cds) - 1
+        start_codon, stop_codon = 0, len(s) - 1
         if not five_p and not three_p:
-            seq = MutableSeq(cds)
+            seq = MutableSeq(s)
         elif not five_p and three_p:
-            seq = MutableSeq(cds + three_p)
-            tp = len(cds)
+            seq = MutableSeq(s + three_p)
+            tp = len(s)
         elif not three_p and five_p:
-            seq = MutableSeq(five_p + cds)
+            seq = MutableSeq(five_p + s)
             fp = 0
             start_codon = len(five_p)
             stop_codon += len(five_p)
         elif three_p and five_p:
-            seq = MutableSeq(five_p + cds + three_p)
-            fp, start_codon, tp = 0, len(five_p), len(cds)
+            seq = MutableSeq(five_p + s + three_p)
+            fp, start_codon, tp = 0, len(five_p), len(s)
             stop_codon += len(five_p)
         return cls(
             s=seq,
             five_p=fp,
             three_p=tp,
-            start_codon=start_codon,
-            stop_codon=stop_codon,
+            start=start_codon,
+            end=stop_codon,
             relative_to=relative_to,
         )
 
