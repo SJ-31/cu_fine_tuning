@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import os
+import subprocess as sp
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
+from zipfile import ZipFile
 
 import duckdb
 import polars as pl
 from attrs import Factory, define, field
+from Bio import SeqIO
 from Bio.Seq import MutableSeq, Seq
 from biocommons.seqrepo import SeqRepo
 from hgvs.exceptions import HGVSParseError
@@ -179,7 +183,48 @@ class SeqDB:
         )
         self.aliases[namespace] = dict(zip(mapping[id_col], mapping[alias_col]))
 
-    def fetch(self, id: str, namespace: str | None = None) -> Sequence:
+    @staticmethod
+    def download(id: str, take_first: bool = True) -> dict[str, str]:
+        """Download RefSeq sequence given by `id` with NCBI datasets.
+
+        If `id` can't be found in the fasta files provided by the data package and `take_first`,
+        retrieve the first sequence in the fasta file
+        """
+        tmp = {}
+        with TemporaryDirectory() as d:
+            dir = Path(d)
+            zip_file = dir / "dataset.zip"
+            command = [
+                "datasets",
+                "download",
+                "gene",
+                "accession",
+                id,
+                "--include",
+                "gene,cds,3p-utr,5p-utr",
+                "--no-progressbar",
+                "--filename",
+                zip_file,
+            ]
+            proc = sp.run(command, shell=True)
+            proc.check_returncode()
+            with ZipFile(zip_file, "r") as z:
+                contents = z.namelist()
+                for seqtype in ("gene", "cds", "3p_utr", "5p_utr"):
+                    extract_to = dir / f"{seqtype}.fna"
+                    path = f"dataset/data/{seqtype}.fna"
+                    if path in contents:
+                        z.extract(path, extract_to)
+                        seqs = [seq for seq in SeqIO.parse(extract_to, "fasta")]
+                        tmp[seqtype] = seqs or []
+        result = {}
+        for k, seqlist in tmp.items():
+            for seq in seqlist:
+                if seq.id.startswith(id) and ":" in seq.id:
+                    result[k] = str(seq.seq)
+            if not result.get(k) and take_first:
+                result[k] = str(next(seqlist).seq)
+        return result
         if namespace is not None:
             id = self.aliases[namespace][id]
         five_p, three_p, cds = self.db.execute(
