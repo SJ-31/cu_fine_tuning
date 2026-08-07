@@ -207,7 +207,7 @@ class SeqDB:
                 "--filename",
                 str(zip_file),
             ]
-            proc = sp.run(" ".join(command), shell=True)
+            proc = sp.run(" ".join(command), shell=True, capture_output=True)
             proc.check_returncode()
             with ZipFile(zip_file, "r") as z:
                 contents = z.namelist()
@@ -314,21 +314,21 @@ class SeqDB:
             id = self.aliases[namespace][id]
         fp, tp, cds, full = self.db.execute(
             """
-        SELECT  5p_utr, 3p_utr, cds, full FROM t WHERE id == ?
+        SELECT  fp_utr, tp_utr, cds, full_seq FROM t WHERE id == ?
         """,
             [id],
-        )
+        ).fetchone()
         return {"5p_utr": fp, "3p_utr": tp, "cds": cds, "full": full}
 
     def __attrs_post_init__(self):
-        if not self.file.exists():
-            self.db.sql("""
-            CREATE TABLE t (id PRIMARY_KEY VARCHAR,
-            5p_utr VARCHAR,
-            3p_utr VARCHAR,
+        self.db.sql("""
+        CREATE TABLE IF NOT EXISTS t (
+            id VARCHAR PRIMARY KEY,
+            fp_utr VARCHAR,
+            tp_utr VARCHAR,
             cds VARCHAR,
-            full VARCHAR
-            )
+            full_seq VARCHAR
+        );
             """)
 
 

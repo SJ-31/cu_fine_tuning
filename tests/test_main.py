@@ -2,9 +2,7 @@
 
 import sys
 
-import gffutils
 import polars as pl
-import pyfaidx
 import pytest
 from biocommons.seqrepo import SeqRepo
 from hgvs.parser import Parser
@@ -17,12 +15,6 @@ DATA = here("data")
 
 SR: SeqRepo = SeqRepo(DATA / "seqrepo/2024-12-20/")
 DB = DATA / "GCF_000001405.40.db"
-
-# TODO: record creation as
-# db = gffutils.create_db(
-#     gff, data / "GCF_000001405.40.db", merge_strategy="create_unique", force=True
-# )
-
 HP = Parser()
 
 
@@ -41,15 +33,15 @@ DOWNLOADS = pl.scan_csv(here("tests", "download_test.csv"))
 
 
 def test_seqdb(tmp_path):
-    db_dir = tmp_path / "seqs.db"
-    db = db_dir(file=db_dir)
+    db_file = tmp_path / "seqs.db"
+    db = m.SeqDB(file=db_file)
     db.set_aliases(
-        here("data", "mart_2026-08-03_filtered.csv"),
+        pl.read_csv(here("data", "mart_2026-08-03_filtered.csv")),
         id_col="RefSeq match transcript (MANE Select)",
         alias_col="Transcript stable ID version",
         namespace="ensembl",
     )
-    lookup = DOWNLOADS.collect().rows_by_key("id", unique=True, named=True)[id]
+    lookup = DOWNLOADS.collect().rows_by_key("id", unique=True, named=True)
     ids = [
         "NR_023317.1",
         "NR_104088.1",
@@ -59,7 +51,7 @@ def test_seqdb(tmp_path):
         "NR_fail",
         "NM_fail",
     ]
-    failed = db.add_refseq_transcripts(ids)
+    failed = db.add_refseq_transcripts(ids, sr=SR)
     assert "fail" in failed
     assert "NR_fail" in failed
     assert "NM_fail" in failed
@@ -73,7 +65,7 @@ def test_seqdb(tmp_path):
 @pytest.mark.parametrize("id", list(DOWNLOADS.collect()["id"]))
 def test_download(id):
     lookup = DOWNLOADS.collect().rows_by_key("id", unique=True, named=True)[id]
-    fp, tp, cds = lookup["fp"], lookup["tp"], lookup["cds"]
+    fp, tp, cds = lookup["5p_utr"], lookup["3p_utr"], lookup["cds"]
     result = m.SeqDB.download(id)
     assert fp == result["5p_utr"]
     assert tp == result["3p_utr"]
