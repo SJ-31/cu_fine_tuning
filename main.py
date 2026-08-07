@@ -307,7 +307,8 @@ class SeqDB:
             CREATE TABLE t (id PRIMARY_KEY VARCHAR,
             5p_utr VARCHAR,
             3p_utr VARCHAR,
-            cds VARCHAR
+            cds VARCHAR,
+            full VARCHAR
             )
             """)
 
