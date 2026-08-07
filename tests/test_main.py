@@ -35,6 +35,19 @@ NR_104088.1     RNU6-8     -1         GTGCTCGCTTCGGCAGCACATATACTAAAATTGGAACGATAC
 
 snps = pl.read_csv(here("tests", "snps.csv"))
 
+downloads = pl.scan_csv(here("tests", "download_test.csv"))
+
+
+@pytest.mark.parametrize("id", list(downloads.collect()["id"]))
+def test_download(id):
+    print(id)
+    lookup = downloads.collect().rows_by_key("id", unique=True, named=True)[id]
+    fp, tp, cds = lookup["fp"], lookup["tp"], lookup["cds"]
+    result = m.SeqDB.download(id)
+    assert fp == result["5p_utr"]
+    assert tp == result["3p_utr"]
+    assert cds == result["cds"]
+
 
 def test_seq_delete():
     seq = m.Sequence.new("ATGAGACTAGACAGTGA", "fiveprime", "threeprime", "start")

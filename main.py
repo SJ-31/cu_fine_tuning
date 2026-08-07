@@ -161,6 +161,7 @@ class Transcript:
             start=start_codon,
             end=stop_codon,
             relative_to=relative_to,
+            is_cds=True,
         )
 
     def __str__(self) -> str:
@@ -204,26 +205,28 @@ class SeqDB:
                 "gene,cds,3p-utr,5p-utr",
                 "--no-progressbar",
                 "--filename",
-                zip_file,
+                str(zip_file),
             ]
-            proc = sp.run(command, shell=True)
+            proc = sp.run(" ".join(command), shell=True)
             proc.check_returncode()
             with ZipFile(zip_file, "r") as z:
                 contents = z.namelist()
                 for seqtype in ("gene", "cds", "3p_utr", "5p_utr"):
-                    extract_to = dir / f"{seqtype}.fna"
-                    path = f"dataset/data/{seqtype}.fna"
+                    extract_to = dir / seqtype
+                    path = f"ncbi_dataset/data/{seqtype}.fna"
                     if path in contents:
-                        z.extract(path, extract_to)
-                        seqs = [seq for seq in SeqIO.parse(extract_to, "fasta")]
+                        z.extract(member=path, path=extract_to)
+                        file = extract_to / path
+                        seqs = [seq for seq in SeqIO.parse(file, "fasta")]
                         tmp[seqtype] = seqs or []
         result = {}
         for k, seqlist in tmp.items():
             for seq in seqlist:
                 if seq.id.startswith(id) and ":" in seq.id:
                     result[k] = str(seq.seq)
-            if not result.get(k) and take_first:
-                result[k] = str(next(seqlist).seq)
+                    break
+            if not result.get(k) and take_first and seqlist:
+                result[k] = str(seqlist[0].seq)
         return result
 
     def add_refseq_transcripts(
