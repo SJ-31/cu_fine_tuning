@@ -260,14 +260,18 @@ class SeqDB:
             print("WARNING: no mapping key provided, cannot map Ensembl transcripts")
             lookup = {}
         failed = {}
-        for id in ids:
-            if id.startswith("ENST") and lookup:
+        ids = list(set(ids))
+        previous = {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
+        for id in ids:  # Save each id individually in case of network errors
+            if id in previous:
+                continue
+            elif id.startswith("ENST") and lookup:
                 if id not in lookup:
                     failed[id] = "could not map from Ensembl to RefSeq"
                     continue
                 else:
                     id = lookup[id]
-            if id.startswith("NR_"):
+            elif id.startswith("NR_"):
                 fp, tp, cds = "", "", ""
                 try:
                     full = sr.fetch(id)
@@ -290,19 +294,31 @@ class SeqDB:
             else:
                 failed[id] = "unsupported prefix"
                 continue
-            # Save each id individually in case of network errors
             to_insert = [id, fp, tp, cds, full]
             self.db.execute("INSERT INTO t VALUES (?, ?, ?, ?, ?)", to_insert)
         return failed
 
+    def fetch_transcript(self, id: str, namespace: str | None = None) -> Transcript:
+        res = self.fetch(id, namespace)
+        if id.startswith("NR_") and res.get("full"):
+            return Transcript.new(s=res.get("full", ""), is_cds=False)
+        return Transcript.new(
+            s=res.get("cds", ""),
+            five_p=res.get("5p_utr"),
+            three_p=res.get("3p_utr"),
+            is_cds=True,
+        )
+
+    def fetch(self, id: str, namespace: str | None = None) -> dict:
         if namespace is not None:
             id = self.aliases[namespace][id]
-        five_p, three_p, cds = self.db.execute(
+        fp, tp, cds, full = self.db.execute(
             """
-        SELECT  5p_utr, 3p_utr, cds FROM t WHERE id == ?
+        SELECT  5p_utr, 3p_utr, cds, full FROM t WHERE id == ?
         """,
             [id],
         )
+        return {"5p_utr": fp, "3p_utr": tp, "cds": cds, "full": full}
 
     def __attrs_post_init__(self):
         if not self.file.exists():
