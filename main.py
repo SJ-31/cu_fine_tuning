@@ -225,6 +225,73 @@ class SeqDB:
             if not result.get(k) and take_first:
                 result[k] = str(next(seqlist).seq)
         return result
+
+    def add_refseq_transcripts(
+        self, ids: list[str], sr: SeqRepo, mapping_key: str | None = "ensembl"
+    ) -> dict[str, str]:
+        """
+        Add RefSeq transcripts in `ids` to db.
+
+        Parameters
+        ----------
+        ids : list[str]
+            List of RefSeq or Ensembl transcript ids (MANE).
+            The latter will be mapped
+            using `self.aliases` by `mapping_key` if provided
+            ids must be prefixed with `NM_`, `NR_`, or `ENST`
+
+        BUG: because datasets doesn't provide the NR_ accessions in its
+            data packages for non-coding transcripts, must use SeqRepo instead
+
+        Returns
+        -------
+        Dict of failed ids > failure reason
+        """
+        if mapping_key:
+            lookup: dict | None = self.aliases.get(mapping_key)
+            if not lookup:
+                print(
+                    f"WARNING: {mapping_key} not in `aliases`, cannot map Ensembl transcripts"
+                )
+        else:
+            print("WARNING: no mapping key provided, cannot map Ensembl transcripts")
+            lookup = {}
+        failed = {}
+        for id in ids:
+            if id.startswith("ENST") and lookup:
+                if id not in lookup:
+                    failed[id] = "could not map from Ensembl to RefSeq"
+                    continue
+                else:
+                    id = lookup[id]
+            if id.startswith("NR_"):
+                fp, tp, cds = "", "", ""
+                try:
+                    full = sr.fetch(id)
+                except KeyError:
+                    failed[id] = "not found in SeqRepo"
+                    continue
+            elif id.startswith("NM_"):
+                try:
+                    downloaded = self.download(id)
+                    fp = downloaded.get("5p_utr", "")
+                    tp = downloaded.get("3p_utr", "")
+                    cds = downloaded.get("cds")
+                    full = ""
+                    if not cds:
+                        failed[id] = "no CDS could be downloaded with datasets"
+                        continue
+                except sp.CalledProcessError:
+                    failed[id] = "datasets raised CalledProcessError"
+                    continue
+            else:
+                failed[id] = "unsupported prefix"
+                continue
+            # Save each id individually in case of network errors
+            to_insert = [id, fp, tp, cds, full]
+            self.db.execute("INSERT INTO t VALUES (?, ?, ?, ?, ?)", to_insert)
+        return failed
+
         if namespace is not None:
             id = self.aliases[namespace][id]
         five_p, three_p, cds = self.db.execute(
