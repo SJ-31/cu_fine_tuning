@@ -95,8 +95,9 @@ class Transcript:
 
         if len(s) == 1:
             insert_char(i, s)
-        for char in s[::-1]:
-            insert_char(i, char)
+        else:
+            for char in s[::-1]:
+                insert_char(i, char)
 
     def __delitem__(self, i: int | slice):
         def d(idx: int):
