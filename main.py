@@ -448,30 +448,64 @@ class VariantGenerator:
         seq[pos[0]] = v.posedit.edit.alt
         return str(seq)
 
-    def gen(self, id: str, hgvs: str) -> str:
+    def gen_safe(
+        self, id: str, hgvs: str, allow_uncertain: bool = False
+    ) -> tuple[bool, str]:
+        """
+        Wrapper around variant generation to ignore unsupported or failed
+        variants
+
+        Returns
+        -------
+        tuple of
+            - bool : whether the variant was successfully generated
+            - str : variant sequence if first element was true,
+            otherwise reason indicating why generation failed
+        """
         try:
             v: SequenceVariant = self.parser.parse(hgvs)
+            if v.posedit.pos.uncertain and not allow_uncertain:
+                return False, "Variant position uncertain"
             self._validate_var(v)
+            result = self.gen(id, hgvs=v)
+            return True, result
+        except (VariantUnsupportedError, ValueError) as u:
+            return False, str(u)
+        except HGVSParseError as e:
+            return False, f"HGVS library failed to parse: {str(e)}"
+
+    def gen(self, id: str, hgvs: str | SequenceVariant) -> str:
+        """
+        Generate variant from HGVS string
+
+        Parameters
+        ----------
+        id : str
+            Sequence identifier for variant
+        """
+        try:
+            if isinstance(hgvs, str):
+                v: SequenceVariant = self.parser.parse(hgvs)
+            else:
+                v = hgvs
             vtype = v.posedit.edit.type
             if vtype == "sub":
                 edited = self.gen_sub(id, v)
             elif vtype == "del":
                 edited = self.gen_del(id, v)
-            elif vtype == "del":
-                edited = self.gen_del(id, v)
+            elif vtype == "ins":
+                edited = self.gen_ins(id, v)
             elif vtype == "dup":
                 edited = self.gen_dup(id, v)
             else:
-                raise NotImplementedError(
-                    f"Can't yet generate variants of type {vtype}"
-                )
+                raise NotImplementedError(f"Can't generate variants of type {vtype}")
             if v.type == "g":
                 return self.extract_gene(edited, id)
             return edited
-        except HGVSParseError:
+        except HGVSParseError as e:
             if "[" in hgvs and "]" in hgvs:
                 return self.gen_repeat(id, hgvs)
-            return ""
+            raise e
 
 
 # def main():
