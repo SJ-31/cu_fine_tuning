@@ -392,7 +392,7 @@ class VariantGenerator:
     parser: Parser = field(factory=Parser)
     seqtype: Literal["aa", "dna"] = "dna"
 
-    def lookup(self, name: str) -> Transcript:
+    def lookup(self, name: str, v: SequenceVariant) -> Transcript:
         namespace = None
         if name.startswith("ENS"):
             namespace = "ensembl"
@@ -400,7 +400,14 @@ class VariantGenerator:
             added, reason = self.db.add_refseq_transcript(name, sr=self.sr)
             if not added:
                 raise ValueError(f"Sequence for `{name}` unavailable. Reason: {reason}")
-        return self.db.fetch_transcript(name, namespace=namespace)
+        transcript = self.db.fetch_transcript(name, namespace=namespace)
+        if (
+            "datum" in dir(v.posedit.pos.start)
+            and transcript.is_cds
+            and v.posedit.pos.start.datum.name == "CDS_END"
+        ):
+            transcript.relative_to = "stop"
+        return transcript
 
     def _validate_var(self, v: SequenceVariant) -> None:
         if v.type == "g":
@@ -442,7 +449,7 @@ class VariantGenerator:
             )
 
     def gen_sub(self, id: str, v: SequenceVariant) -> str:
-        seq: Transcript = self.lookup(id)
+        seq: Transcript = self.lookup(id, v)
         pos = ends(v)
         self._check_ref(seq, pos, v, "sub")
         seq[pos[0]] = v.posedit.edit.alt
