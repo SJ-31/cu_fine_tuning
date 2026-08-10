@@ -2,6 +2,7 @@
 
 import sys
 
+import numpy as np
 import polars as pl
 import pytest
 from _pytest.subtests import subtests
@@ -40,6 +41,35 @@ IDS = [
     "NR_fail",
     "NM_fail",
 ]
+
+
+def edit_distance(a: str, b: str) -> int:
+    """
+    Calculate the edit distance between a, b using the Wagner-Fischer algorithm
+    https://en.wikipedia.org/wiki/Wagner%E2%80%93Fischer_algorithm
+
+    Returns
+    -------
+    Levenshtein edit distance from string a to b
+    """
+    m, n = len(a), len(b)
+    d = np.zeros((m + 1, n + 1))
+    for i in range(1, m + 1):
+        d[i, 0] = i + 1
+    for j in range(1, n + 1):
+        d[0, j] = j + 1
+    for j in range(1, n + 1):
+        for i in range(1, m + 1):
+            if a[i - 1] == b[j - 1]:
+                sub_cost = 0
+            else:
+                sub_cost = 1
+            d[i, j] = min(
+                d[i - 1, j] + 1,  # deletion
+                d[i, j - 1] + 1,  # insertion
+                d[i - 1, j - 1] + sub_cost,  # substitution
+            )
+    return d[m - 1, n - 1]
 
 
 @pytest.fixture
@@ -121,13 +151,24 @@ def test_seq_insert():
     assert str(s2) == "AFOOTG"
 
 
-@pytest.mark.parametrize("vtype", ["snps", "ins"])
+@pytest.mark.parametrize("vtype", ["snps", "ins", "del"])
 def test_from_cvs(vtype, default_db, subtests):
     file = here("tests", "data", f"{vtype}.csv")
     db = default_db
     G = m.VariantGenerator(db=db, parser=HP, seqtype="dna", sr=SR)
     aligner = Align.PairwiseAligner()
-    for gene, hgvs, alt, supported in pl.read_csv(file).iter_rows():
+    df = pl.read_csv(
+        file,
+        schema={
+            "gene": pl.String,
+            "hgvs": pl.String,
+            "alt": pl.String,
+            "supported": pl.Boolean,
+            "pos_check": pl.String,
+            "char": pl.String,
+        },
+    )
+    for gene, hgvs, alt, supported, pos_check, char in df.iter_rows():
         with subtests.test(msg=f"Testing {hgvs}"):
             if supported:
                 generated = G.gen(gene, hgvs)
@@ -135,17 +176,30 @@ def test_from_cvs(vtype, default_db, subtests):
                     assert alt == generated
                 else:
                     seq = SR.fetch(gene)
-                    alignments = aligner.align(seq, generated)
-                    assert len(alignments) >= 1
-                    a1 = alignments[0]
-                    print(f"Alignment, score {a1.score} (max {len(seq)})\n{a1}")
+                    try:
+                        alignments = aligner.align(seq, generated)
+                        assert len(alignments) >= 1
+                        a1 = alignments[0]
+                        print(f"Alignment, score {a1.score} (max {len(seq)})\n{a1}")
+                        score = a1.score
+                    except OverflowError:
+                        score = edit_distance(seq, generated)
                     if vtype == "snps":
                         expected_score = len(seq) - 1
-                    elif vtype == "ins":
+                    elif vtype in "ins":
                         len_diff = len(generated) - len(seq)
                         expected_score = len(seq) - len_diff
-                    assert a1.score == expected_score
-
+                    elif vtype == "del":
+                        len_diff = len(seq) - len(generated)
+                        print("ld", len_diff)
+                        expected_score = len(seq) - len_diff
+                    assert score == expected_score
+                if pos_check and char:
+                    if len(pos_check) == 1:
+                        assert generated[int(pos_check)] == char
+                    else:
+                        start, end = pos_check.split("-")
+                        assert generated[int(start) : int(end)] == char
             else:
                 with pytest.raises(m.VariantUnsupportedError):
                     G.gen(gene, hgvs)
