@@ -373,8 +373,9 @@ class VariantUnsupportedError(Exception):
 def get_pos(p: BaseOffsetPosition) -> int:
     offset = p.offset
     if offset == 0:
-        # HGVS syntax is 1-indexed
-        return p.base - 1
+        # WARNING: HGVS syntax is 1-indexed, but this is accounted for
+        # by Transcript class
+        return p.base
     raise VariantUnsupportedError(
         "Can only generate intron variants with g. definitions"
     )
@@ -382,15 +383,6 @@ def get_pos(p: BaseOffsetPosition) -> int:
 
 def ends(v: SequenceVariant) -> tuple[int, int]:
     return get_pos(v.posedit.pos.start), get_pos(v.posedit.pos.end)
-
-
-# TODO: check out
-# https://github.com/biocommons/hgvs/blob/82500b8f5c9f08a44094096dac9457606735205b/src/hgvs/utils/altseqbuilder.py
-# the class is mainly used for HGVSc to HGVSp conversion, so you would
-# need to modify it. But good to reference it to check for edge cases
-
-# TODO: cause the RefSeq sequences contain the UTRs, and HGVS numbers
-# from the start codon, need to identify them
 
 
 @define
