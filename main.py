@@ -453,7 +453,17 @@ class VariantGenerator:
         pass
 
     def gen_dup(self, id: str, v: SequenceVariant) -> str:
-        pass
+        """Generate dup variant"""
+        seq: Transcript = self.lookup(id, v)
+        pos = ends(v)
+        if pos[0] == pos[1]:
+            to_dup = seq[pos[0]]
+            print("to_dup", to_dup)
+            seq.insert(pos[1], to_dup)
+        else:
+            to_dup = seq[pos[0] : pos[1] + 1]  # inclusive range following HGVS
+            seq.insert(pos[1] + 1, to_dup)
+        return str(seq)
 
     def gen_ins(self, id: str, v: SequenceVariant) -> str:
         """

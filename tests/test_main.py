@@ -150,8 +150,11 @@ def test_seq_insert():
     assert str(s2) == "AFOOTG"
 
 
-@pytest.mark.parametrize("vtype", ["snps", "ins", "del", "delins"])
-def test_from_cvs(vtype, default_db, subtests):
+# [2026-08-10 Mon] TODO: should add c. type tests for delins and dup too
+
+
+@pytest.mark.parametrize("vtype", ["snps", "ins", "del", "delins", "dup"])
+def test_from_csv(vtype, default_db, subtests):
     file = here("tests", "data", f"{vtype}.csv")
     db = default_db
     G = m.VariantGenerator(db=db, parser=HP, seqtype="dna", sr=SR)
