@@ -4,6 +4,8 @@ import sys
 
 import polars as pl
 import pytest
+from _pytest.subtests import subtests
+from Bio import Align
 from biocommons.seqrepo import SeqRepo
 from hgvs.parser import Parser
 from pyhere import here
@@ -28,8 +30,6 @@ EXTRA = {
     "NR_023317.1": "CAGTGTTACAGCTCTTTTAGAATTTGTCTAGTAGGCTTTCTGGCTTTTTACCGGAAAGCCCCT",
     "NR_104088.1": "GTGCTCGCTTCGGCAGCACATATACTAAAATTGGAACGATACAGAGAAGATTAGCATGGCCCCTGCGCAAGGATGACACGCAAATTCGTGAAGCGTTCCATATTTTG",
 }
-SNPS = pl.read_csv(here("tests", "data", "snps.csv"))
-INS = pl.scan_csv(here("tests", "data", "ins.csv"))
 DOWNLOADS = pl.scan_csv(here("tests", "data", "download_test.csv"))
 IDS = [
     "NR_023317.1",
@@ -111,14 +111,34 @@ def test_seq():
     assert seq[3:11] == "inserted"
     del seq[2:5]
 
+    # 133 + 708 + 43
 
-@pytest.mark.parametrize("gene,hgvs,alt,supported", list(SNPS.iter_rows()))
-def test_sub(gene, hgvs: str, alt: str, supported: bool, default_db):
+
+@pytest.mark.parametrize("vtype", ["snps", "ins"])
+def test_from_cvs(vtype, default_db, subtests):
+    file = here("tests", "data", f"{vtype}.csv")
     db = default_db
     G = m.VariantGenerator(db=db, parser=HP, seqtype="dna", sr=SR)
-    if supported:
-        generated = G.gen(gene, hgvs)
-        assert alt == generated
-    else:
-        with pytest.raises(m.VariantUnsupportedError):
-            G.gen(gene, hgvs)
+    aligner = Align.PairwiseAligner()
+    for gene, hgvs, alt, supported in pl.read_csv(file).iter_rows():
+        with subtests.test(msg=f"Testing {hgvs}"):
+            if supported:
+                generated = G.gen(gene, hgvs)
+                if alt:
+                    assert alt == generated
+                else:
+                    seq = SR.fetch(gene)
+                    alignments = aligner.align(seq, generated)
+                    assert len(alignments) >= 1
+                    a1 = alignments[0]
+                    print(f"Alignment, score {a1.score} (max {len(seq)})\n{a1}")
+                    if vtype == "snps":
+                        expected_score = len(seq) - 1
+                    elif vtype == "ins":
+                        len_diff = len(generated) - len(seq)
+                        expected_score = len(seq) - len_diff
+                    assert a1.score == expected_score
+
+            else:
+                with pytest.raises(m.VariantUnsupportedError):
+                    G.gen(gene, hgvs)
