@@ -28,8 +28,9 @@ EXTRA = {
     "NR_023317.1": "CAGTGTTACAGCTCTTTTAGAATTTGTCTAGTAGGCTTTCTGGCTTTTTACCGGAAAGCCCCT",
     "NR_104088.1": "GTGCTCGCTTCGGCAGCACATATACTAAAATTGGAACGATACAGAGAAGATTAGCATGGCCCCTGCGCAAGGATGACACGCAAATTCGTGAAGCGTTCCATATTTTG",
 }
-SNPS = pl.read_csv(here("tests", "snps.csv"))
-DOWNLOADS = pl.scan_csv(here("tests", "download_test.csv"))
+SNPS = pl.read_csv(here("tests", "data", "snps.csv"))
+INS = pl.scan_csv(here("tests", "data", "ins.csv"))
+DOWNLOADS = pl.scan_csv(here("tests", "data", "download_test.csv"))
 IDS = [
     "NR_023317.1",
     "NR_104088.1",
@@ -114,7 +115,7 @@ def test_seq():
 @pytest.mark.parametrize("gene,hgvs,alt,supported", list(SNPS.iter_rows()))
 def test_sub(gene, hgvs: str, alt: str, supported: bool, default_db):
     db = default_db
-    G = m.VariantGenerator(db=db, parser=HP, seqtype="dna")
+    G = m.VariantGenerator(db=db, parser=HP, seqtype="dna", sr=SR)
     if supported:
         generated = G.gen(gene, hgvs)
         assert alt == generated
