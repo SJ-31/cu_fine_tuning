@@ -111,7 +111,14 @@ def test_seq():
     assert seq[3:11] == "inserted"
     del seq[2:5]
 
-    # 133 + 708 + 43
+
+def test_seq_insert():
+    seq = m.Transcript.new("ATG", "fp", "tp", "start")
+    seq.insert(2, "FOO")
+    assert str(seq) == "fpAFOOTGtp"
+    s2 = m.Transcript.new("ATG", is_cds=False)
+    s2.insert(2, "FOO")
+    assert str(s2) == "AFOOTG"
 
 
 @pytest.mark.parametrize("vtype", ["snps", "ins"])

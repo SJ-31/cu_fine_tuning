@@ -132,7 +132,7 @@ class Transcript:
                 five_p=None,
                 three_p=None,
                 is_cds=False,
-                relative_to=relative_to,
+                relative_to="start",
             )
         if s[:3].upper() != "ATG":
             print("WARNING: CDS has no start codon")
@@ -431,9 +431,17 @@ class VariantGenerator:
         pass
 
     def gen_ins(self, id: str, v: SequenceVariant) -> str:
-        seq: Transcript = self.lookup(id)
+        """
+        Generate simple, non self-referential insertion.
+        Complex insertions (see https://hgvs-nomenclature.org/stable/recommendations/DNA/insertion/)
+        currently unsupported
+        """
+        seq: Transcript = self.lookup(id, v)
         pos = ends(v)
-        pass
+        if not v.posedit.pos.uncertain and pos[1] - pos[0] > 1:
+            raise ValueError("Insertion range must be adjacent")
+        seq.insert(pos[1], v.posedit.edit.alt)
+        return str(seq)
 
     def _check_ref(
         self, seq: Transcript, pos: tuple[int, int], v: SequenceVariant, type: str
