@@ -424,7 +424,31 @@ class VariantGenerator:
     def gen_repeat(self, id: str, hgvs: str):
         raise NotImplementedError()
 
+    def gen_delins(self, id: str, v: SequenceVariant) -> str:
+        seq: Transcript = self.lookup(id, v)
+        pos = ends(v)
+        if pos[1] == pos[0]:
+            del seq[pos[0]]
+        else:
+            for _ in range(pos[1] - pos[0] + 1):
+                del seq[pos[0]]
+        seq.insert(pos[0], v.posedit.edit.alt)
+        return str(seq)
+
     def gen_del(self, id: str, v: SequenceVariant) -> str:
+        """Generate del variant
+
+        Ranges are inclusive, following HGVS syntax
+        """
+        seq: Transcript = self.lookup(id, v)
+        pos = ends(v)
+        if pos[1] == pos[0]:
+            del seq[pos[0]]
+        else:
+            for _ in range(pos[1] - pos[0] + 1):
+                del seq[pos[0]]
+        return str(seq)
+
         pass
 
     def gen_dup(self, id: str, v: SequenceVariant) -> str:
@@ -512,6 +536,8 @@ class VariantGenerator:
                 edited = self.gen_ins(id, v)
             elif vtype == "dup":
                 edited = self.gen_dup(id, v)
+            elif vtype == "delins":
+                edited = self.gen_delins(id, v)
             else:
                 raise NotImplementedError(f"Can't generate variants of type {vtype}")
             if v.type == "g":

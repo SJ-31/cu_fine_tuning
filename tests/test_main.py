@@ -5,7 +5,6 @@ import sys
 import numpy as np
 import polars as pl
 import pytest
-from _pytest.subtests import subtests
 from Bio import Align
 from biocommons.seqrepo import SeqRepo
 from hgvs.parser import Parser
@@ -151,7 +150,7 @@ def test_seq_insert():
     assert str(s2) == "AFOOTG"
 
 
-@pytest.mark.parametrize("vtype", ["snps", "ins", "del"])
+@pytest.mark.parametrize("vtype", ["snps", "ins", "del", "delins"])
 def test_from_cvs(vtype, default_db, subtests):
     file = here("tests", "data", f"{vtype}.csv")
     db = default_db
@@ -173,29 +172,26 @@ def test_from_cvs(vtype, default_db, subtests):
             if supported:
                 generated = G.gen(gene, hgvs)
                 if alt:
+                    print(aligner.align(alt, generated)[0])
                     assert alt == generated
                 else:
                     seq = SR.fetch(gene)
+                    score = edit_distance(seq, generated)
                     try:
                         alignments = aligner.align(seq, generated)
-                        assert len(alignments) >= 1
                         a1 = alignments[0]
                         print(f"Alignment, score {a1.score} (max {len(seq)})\n{a1}")
-                        score = a1.score
                     except OverflowError:
-                        score = edit_distance(seq, generated)
+                        pass
                     if vtype == "snps":
-                        expected_score = len(seq) - 1
+                        expected_score = 1
                     elif vtype in "ins":
-                        len_diff = len(generated) - len(seq)
-                        expected_score = len(seq) - len_diff
+                        expected_score = len(generated) - len(seq)
                     elif vtype == "del":
-                        len_diff = len(seq) - len(generated)
-                        print("ld", len_diff)
-                        expected_score = len(seq) - len_diff
+                        expected_score = len(seq) - len(generated)
                     assert score == expected_score
                 if pos_check and char:
-                    if len(pos_check) == 1:
+                    if "-" not in pos_check:
                         assert generated[int(pos_check)] == char
                     else:
                         start, end = pos_check.split("-")
