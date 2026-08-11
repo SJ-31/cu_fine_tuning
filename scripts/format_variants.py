@@ -86,12 +86,12 @@ SOURCES = {
         RAW, "ProteinGym", "indels_preprocessed_clinvar.csv"
     ),
     "ClinGen": here(RAW, "clingen_erepo-tabbed.tsv"),
-    "CiVIC": here(RAW, "CIViC", "nightly-civic_accepted_civic_2026-08-11.txt"),
+    "CIViC": here(RAW, "CIViC", "nightly-civic_accepted_civic_2026-08-11.txt"),
 }
 
 # [2026-08-11 Tue] format each of these separately
 
-civic_columns = [
+CIVIC_COLS = [
     "Allele",
     "Consequence",
     "SYMBOL",
@@ -246,5 +246,64 @@ def format_proteingym_indels_clinvar(file) -> pl.DataFrame:
     df = consequence_from_hgvsp(df)
     return df
 
+
+def format_clingen_erepo(file) -> pl.DataFrame:
+    df: pl.DataFrame = pl.read_csv(file, separator="\t", ignore_errors=True)
+    df = (
+        df.select(["HGNC Gene Symbol", "Disease", "Assertion", "Variation"])
+        .rename(
+            {"Disease": "disease", "Assertion": "clinsig", "HGNC Gene Symbol": "symbol"}
+        )
+        .with_columns(
+            pl.col("Variation")
+            .str.split_exact(":", 1)
+            .struct.rename_fields(["transcript_id", "hgvs"])
+        )
+        .unnest("Variation")
+        .with_columns(
+            pl.col("hgvs").str.extract("\\((p.*)\\)$").alias("prot"),
+            pl.col("transcript_id").str.replace("\\(.*\\)$", ""),
+            pl.col("hgvs").str.replace(" \\(p.*\\)$", ""),
+        )
+        .with_columns(hgvs=pl.col("transcript_id") + ":" + pl.col("hgvs"))
+    )
+    df = consequence_from_hgvsp(df)
     return df
+
+
+def format_civic(file) -> pl.DataFrame:
+    df: pl.DataFrame = pl.read_csv(
+        file, separator="|", new_columns=CIVIC_COLS, truncate_ragged_lines=True
+    )
+    df = (
+        df.select(
+            ["SYMBOL", "Consequence", "HGVSc", "CIViC Entity Disease", "CIViC HGVS"]
+        )
+        .rename(
+            {
+                "SYMBOL": "symbol",
+                "Consequence": "consequence",
+                "CIViC Entity Disease": "disease",
+            }
+        )
+        .with_columns(
+            pl.col("CIViC HGVS")
+            .str.split("&")
+            .list.filter(pl.element().str.starts_with("NM_"))
+            .list.first()
+            .alias("hgvs")
+        )
+    )
+    has_hgvs = (
+        df.filter(pl.col("hgvs").is_not_null())
+        .with_columns(pl.col("hgvs").str.extract("(NM_.*):").alias("transcript_id"))
+        .drop("HGVSc")
+    )
+    no_hgvs = df.filter(pl.col("hgvs").is_null())
+    no_hgvs = convert_ensembl_hgvsc(no_hgvs, "HGVSc").drop("ensembl_transcript_id")
+    return (
+        pl.concat([has_hgvs, no_hgvs])
+        .drop("CIViC HGVS")
+        .with_columns(pl.col("consequence").str.replace_all("&", ";"))
+    )
 
