@@ -133,3 +133,79 @@ civic_columns = [
 
 # Get NM_ hgvsc from the CIViC HGVS column
 # civic = pl.read_csv(, separator = "|", new_columns = civic_columns, truncate_ragged_lines = True)
+
+
+def format_proteingym_snps_clinvar(file) -> pl.DataFrame:
+    df: pl.DataFrame = pl.read_csv(file, infer_schema_length=None)
+    df = (
+        df.filter(pl.col("CLNREVSTAT") != "criteria_provided,_single_submitter")
+        .select(["HGVSc", "clinsig", "Consequence", "Feature", "CLNDN"])
+        .rename(
+            {
+                "Consequence": "consequence",
+                "Feature": "transcript_id",
+                "HGVSc": "hgvs",
+                "CLNDN": "disease",
+            }
+        )
+        .with_columns(
+            pl.col("consequence").str.replace_all(",", ";"),
+            pl.col("disease")
+            .str.split("|")
+            .list.filter(pl.element() != "not_provided")
+            .list.filter(pl.element() != "not_specified"),
+        )
+    )
+    df = map_ids(df, "transcript_id", "symbol")
+    return df
+
+
+def format_proteingym_indels_gnomad(file) -> pl.DataFrame:
+    df: pl.DataFrame = pl.read_csv(file, infer_schema_length=None)
+    df = (
+        df.select(["SYMBOL", "HGVSc"])
+        .with_columns(
+            pl.lit(None).alias("consequence"),
+            pl.lit("benign").alias("clinsig"),
+        )
+        .rename({"SYMBOL": "symbol", "HGVSc": "hgvs"})
+    )
+    df = convert_ensembl_hgvsc(df)
+    return df
+
+def format_proteingym_indels_clinvar(file) -> pl.DataFrame:
+    df: pl.DataFrame = pl.read_csv(file, infer_schema_length=None).filter(
+        ~pl.col("Review status").is_in(
+            ["criteria provided, single submitter", "no assertion criteria provided"]
+        )
+    )
+    df = (
+        df.select(
+            ["Name", "refseq_id", "gene", "Clinical significance", "Condition(s)"]
+        )
+        .rename(
+            {
+                "Condition(s)": "disease",
+                "Clinical significance": "clinsig",
+                "gene": "symbol",
+                "refseq_id": "transcript_id",
+            }
+        )
+        .with_columns(
+            pl.col("Name")
+            .str.split_exact(":", 1)
+            .struct.rename_fields(["_tmp", "hgvs"])
+            .alias("fields")
+        )
+        .unnest("fields")
+        .drop("_tmp")
+        .with_columns(
+            pl.col("hgvs").str.replace(" \\(p.*\\)", ""),
+            pl.col("disease").str.split("|"),
+            pl.lit(None).alias("consequence"),
+        )
+        .with_columns(hgvs=pl.col("transcript_id") + ":" + pl.col("hgvs"))
+        .drop("Name")
+    )
+    return df
+
