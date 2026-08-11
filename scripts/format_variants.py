@@ -1,14 +1,14 @@
 #!/usr/bin/env ipython
 
-
 import os
+from collections.abc import Callable
 from pathlib import Path
+from typing import Literal
 
 import polars as pl
 from pyhere import here
 
-raw: Path = here("data", "raw")
-remote: Path = here("data")
+RAW: Path = here("data", "raw")
 
 
 # TODO: [2026-08-03 Mon] this script should generate the
@@ -18,19 +18,72 @@ remote: Path = here("data")
 # metadata including clinical significance,
 # the source of the variant
 
+# Columns are source, transcript_id, variant_class, symbol,
+# disease, consequence, hgvs, clinsig
 
-sources = {
+MAPPING: pl.DataFrame = (
+    pl.read_csv(here("data", "mart_2026-08-03_filtered.csv"))
+    .select(
+        [
+            "Transcript stable ID version",
+            "RefSeq match transcript (MANE Select)",
+            "Gene name",
+        ]
+    )
+    .rename(
+        {
+            "Gene name": "symbol",
+            "RefSeq match transcript (MANE Select)": "transcript_id",
+            "Transcript stable ID version": "ensembl_transcript_id",
+        }
+    )
+)
+
+
+def map_ids(
+    df: pl.DataFrame,
+    on: Literal["transcript_id", "ensembl_transcript_id"],
+    target: Literal["transcript_id", "symbol"],
+) -> pl.DataFrame:
+    assert on in df.columns, f"Column used for `on` {on} must be in df"
+    mapping = MAPPING.select([on, target]).unique(on)
+    return df.join(mapping, how="left", on=on)
+
+
+def convert_ensembl_hgvsc(df: pl.DataFrame, col: str = "hgvs") -> pl.DataFrame:
+    struct_names = ["ensembl_transcript_id", "hgvs_tmp"]
+    df = (
+        df.with_columns(
+            pl.col(col)
+            .str.split_exact(":", 1)
+            .struct.rename_fields(struct_names)
+            .alias("fields")
+        )
+        .unnest("fields")
+        .drop(col)
+    )
+    if "transcript_id" not in df.columns:
+        df = map_ids(df, on="ensembl_transcript_id", target="transcript_id")
+    df = (
+        df.filter(pl.col("transcript_id").is_not_null())
+        .with_columns(hgvs=pl.col("transcript_id") + ":" + pl.col("hgvs_tmp"))
+        .drop("hgvs_tmp")
+    )
+    return df
+
+
+SOURCES = {
     "ProteinGym-snps-clinvar": here(
-        raw, "ProteinGym", "substitutions_preprocessed.csv"
+        RAW, "ProteinGym", "substitutions_preprocessed.csv"
     ),
     "ProteinGym-indels-gnomAD": here(
-        raw, "ProteinGym", "indels_preprocessed_gnomad.csv"
+        RAW, "ProteinGym", "indels_preprocessed_gnomad.csv"
     ),  # TODO: replace ENST ids with MANE
     "ProteinGym-indels-clinvar": here(
-        raw, "ProteinGym", "indels_preprocessed_clinvar.csv"
+        RAW, "ProteinGym", "indels_preprocessed_clinvar.csv"
     ),  # TODO: extract HGVSc from name column
-    "ClinGen": here(raw, "clingen_erepo-tabbed.tsv"),
-    "CiVIC": here(raw, "CIViC", "nightly-civic_accepted_civic_2026-08-11.txt"),
+    "ClinGen": here(RAW, "clingen_erepo-tabbed.tsv"),
+    "CiVIC": here(RAW, "CIViC", "nightly-civic_accepted_civic_2026-08-11.txt"),
 }
 
 # [2026-08-11 Tue] format each of these separately
