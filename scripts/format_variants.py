@@ -6,10 +6,13 @@ from pathlib import Path
 from typing import Literal
 
 import polars as pl
+from hgvs.exceptions import HGVSParseError
+from hgvs.parser import Parser
 from pyhere import here
 
 RAW: Path = here("data", "raw")
 
+HP = Parser()
 
 # TODO: [2026-08-03 Mon] this script should generate the
 # HGVSc codes for all the ProteinGym samples,
@@ -78,10 +81,10 @@ SOURCES = {
     ),
     "ProteinGym-indels-gnomAD": here(
         RAW, "ProteinGym", "indels_preprocessed_gnomad.csv"
-    ),  # TODO: replace ENST ids with MANE
+    ),
     "ProteinGym-indels-clinvar": here(
         RAW, "ProteinGym", "indels_preprocessed_clinvar.csv"
-    ),  # TODO: extract HGVSc from name column
+    ),
     "ClinGen": here(RAW, "clingen_erepo-tabbed.tsv"),
     "CiVIC": here(RAW, "CIViC", "nightly-civic_accepted_civic_2026-08-11.txt"),
 }
@@ -135,6 +138,38 @@ civic_columns = [
 # civic = pl.read_csv(, separator = "|", new_columns = civic_columns, truncate_ragged_lines = True)
 
 
+def consequence_from_hgvsp(
+    df: pl.DataFrame, col: str = "prot", tmp_prefix: bool = True
+) -> pl.DataFrame:
+    parser = Parser()
+
+    def get_consequence(hgvsp: str) -> str | None:
+        try:
+            var = parser.parse(hgvsp)
+            if "alt" in dir(var.posedit.edit):
+                type = var.posedit.edit.type
+                ref = var.posedit.pos.start.aa
+                alt = var.posedit.edit.alt
+                if type == "sub" and alt != ref and alt != "*":
+                    return "missense_variant"
+                elif type == "sub" and alt == "*":
+                    return "stop_gained"
+                elif type == "identity":
+                    return "synonymous_variant"
+            return
+        except HGVSParseError:
+            return
+
+    if tmp_prefix:
+        df = df.with_columns(("TMP" + ":" + pl.col(col)).alias(col))
+    df = df.with_columns(
+        pl.col(col)
+        .map_elements(get_consequence, return_dtype=pl.String)
+        .alias("consequence")
+    ).drop(col)
+    return df
+
+
 def format_proteingym_snps_clinvar(file) -> pl.DataFrame:
     df: pl.DataFrame = pl.read_csv(file, infer_schema_length=None)
     df = (
@@ -173,6 +208,7 @@ def format_proteingym_indels_gnomad(file) -> pl.DataFrame:
     df = convert_ensembl_hgvsc(df)
     return df
 
+
 def format_proteingym_indels_clinvar(file) -> pl.DataFrame:
     df: pl.DataFrame = pl.read_csv(file, infer_schema_length=None).filter(
         ~pl.col("Review status").is_in(
@@ -200,12 +236,15 @@ def format_proteingym_indels_clinvar(file) -> pl.DataFrame:
         .unnest("fields")
         .drop("_tmp")
         .with_columns(
+            pl.col("hgvs").str.extract("\\((p.*)\\)$").alias("prot"),
             pl.col("hgvs").str.replace(" \\(p.*\\)", ""),
             pl.col("disease").str.split("|"),
-            pl.lit(None).alias("consequence"),
         )
         .with_columns(hgvs=pl.col("transcript_id") + ":" + pl.col("hgvs"))
         .drop("Name")
     )
+    df = consequence_from_hgvsp(df)
+    return df
+
     return df
 
