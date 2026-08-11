@@ -22,6 +22,7 @@ MAPPING: pl.DataFrame = (
             "Transcript stable ID version",
             "RefSeq match transcript (MANE Select)",
             "Gene name",
+            "transcript_len",
         ]
     )
     .rename(
@@ -362,6 +363,12 @@ def main():
         .map_elements(lambda x: get_variant_class(parser, x), return_dtype=pl.String)
         .alias("variant_class"),
         pl.col("clinsig").str.to_lowercase(),
+        pl.col("consequence").str.to_lowercase().str.replace_all(" ", "_"),
+    )
+    combined = combined.join(
+        MAPPING.unique("transcript_id").select(["transcript_id", "transcript_len"]),
+        on="transcript_id",
+        how="left",
     )
     failed = combined.filter(pl.col("variant_class").is_null())
     passed = combined.filter(pl.col("variant_class").is_not_null())

@@ -560,7 +560,23 @@ class VariantGenerator:
             raise e
 
 
-# def main():
+def main(args: dict):
+    seqdb = SeqDB(file=args["database"])
+    parser = Parser()
+    sr = SeqRepo(args["seqrepo"])
+    df: pl.DataFrame = pl.read_csv(args["input"])
+    generator = VariantGenerator(db=seqdb, parser=parser, seqtype="dna", sr=sr)
+    result = df.with_columns(
+        pl.struct(id=args["id_column"], hgvs=args["hgvs_column"])
+        .map_elements(
+            lambda x: generator.gen_safe(x["id"], x["hgvs"]),
+            return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String}),
+        )
+        .alias("fields")
+    ).unnest("fields")
+    failed = result.filter(~pl.col("gen_success")).rename({"alt_seq": "fail_reason"})
+    passed = result.filter(pl.col("gen_success"))
+    return passed, failed
 
 
 def parse_args():
@@ -570,13 +586,27 @@ def parse_args():
     parser.add_argument(
         "-s", "--seqrepo", default=None, help="seqrepo directory", required=True
     )
-    # parser.add_argument("-c", "--", default = , help = "", action = "store")
+    parser.add_argument(
+        "-d",
+        "--database",
+        default=None,
+        help="Sequence database file",
+        action="store",
+        required=True,
+    )
     parser.add_argument("-o", "--output")
     parser.add_argument(
         "-h",
         "--hgvs_column",
         default="hgvs",
         help="Column in input containing HGVS strings",
+        action="store",
+    )
+    parser.add_argument(
+        "-t",
+        "--id_column",
+        default="transcript_id",
+        help="Column containing transcript identifiers",
         action="store",
     )
     parser.add_argument(
@@ -588,4 +618,4 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    sr: SeqRepo = SeqRepo(args["seqrepo"])
+    passed, failed = main(args)
