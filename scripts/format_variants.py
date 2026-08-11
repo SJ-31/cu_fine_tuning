@@ -1,6 +1,5 @@
 #!/usr/bin/env ipython
 
-import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Literal
@@ -12,14 +11,6 @@ from pyhere import here
 
 RAW: Path = here("data", "raw")
 
-HP = Parser()
-
-# TODO: [2026-08-03 Mon] this script should generate the
-# HGVSc codes for all the ProteinGym samples,
-# Also generate a metadata file with
-# extract ClinVar
-# metadata including clinical significance,
-# the source of the variant
 
 # Columns are source, transcript_id, variant_class, symbol,
 # disease, consequence, hgvs, clinsig
@@ -71,6 +62,7 @@ def convert_ensembl_hgvsc(df: pl.DataFrame, col: str = "hgvs") -> pl.DataFrame:
         df.filter(pl.col("transcript_id").is_not_null())
         .with_columns(hgvs=pl.col("transcript_id") + ":" + pl.col("hgvs_tmp"))
         .drop("hgvs_tmp")
+        .drop("ensembl_transcript_id")
     )
     return df
 
@@ -87,9 +79,12 @@ SOURCES = {
     ),
     "ClinGen": here(RAW, "clingen_erepo-tabbed.tsv"),
     "CIViC": here(RAW, "CIViC", "nightly-civic_accepted_civic_2026-08-11.txt"),
+    "COSMIC_resistance": here(
+        RAW, "COSMIC", "Cosmic_ResistanceMutations_v104_GRCh38.tsv.gz"
+    ),
+    "COSMIC_census": here(RAW, "COSMIC", "Cosmic_MutantCensus_v104_GRCh38.tsv.gz"),
 }
 
-# [2026-08-11 Tue] format each of these separately
 
 CIVIC_COLS = [
     "Allele",
@@ -188,7 +183,8 @@ def format_proteingym_snps_clinvar(file) -> pl.DataFrame:
             pl.col("disease")
             .str.split("|")
             .list.filter(pl.element() != "not_provided")
-            .list.filter(pl.element() != "not_specified"),
+            .list.filter(pl.element() != "not_specified")
+            .list.join(";"),
         )
     )
     df = map_ids(df, "transcript_id", "symbol")
@@ -238,7 +234,7 @@ def format_proteingym_indels_clinvar(file) -> pl.DataFrame:
         .with_columns(
             pl.col("hgvs").str.extract("\\((p.*)\\)$").alias("prot"),
             pl.col("hgvs").str.replace(" \\(p.*\\)", ""),
-            pl.col("disease").str.split("|"),
+            pl.col("disease").str.split("|").list.join(";"),
         )
         .with_columns(hgvs=pl.col("transcript_id") + ":" + pl.col("hgvs"))
         .drop("Name")
@@ -300,10 +296,83 @@ def format_civic(file) -> pl.DataFrame:
         .drop("HGVSc")
     )
     no_hgvs = df.filter(pl.col("hgvs").is_null())
-    no_hgvs = convert_ensembl_hgvsc(no_hgvs, "HGVSc").drop("ensembl_transcript_id")
+    no_hgvs = convert_ensembl_hgvsc(no_hgvs, "HGVSc")
     return (
         pl.concat([has_hgvs, no_hgvs])
         .drop("CIViC HGVS")
         .with_columns(pl.col("consequence").str.replace_all("&", ";"))
     )
 
+
+def format_cosmic(file) -> pl.DataFrame:
+    cosmic_samples = (
+        pl.read_csv(
+            here(RAW, "COSMIC", "Cosmic_Sample_v104_GRCh38.tsv.gz"),
+            separator="\t",
+            infer_schema_length=None,
+        )
+        .select(["COSMIC_SAMPLE_ID", "TUMOUR_REMARK"])
+        .rename({"TUMOUR_REMARK": "disease"})
+    )
+    df: pl.DataFrame = pl.read_csv(
+        file, separator="\t", infer_schema_length=None
+    ).filter(pl.col("MUTATION_SOMATIC_STATUS") != "Variant of unknown origin")
+    selection = ["COSMIC_SAMPLE_ID", "HGVSC", "GENE_SYMBOL"]
+    rename = {"GENE_SYMBOL": "symbol"}
+    if "MUTATION_DESCRIPTION" in df.columns:
+        selection.append("MUTATION_DESCRIPTION")
+        rename["MUTATION_DESCRIPTION"] = "consequence"
+    df = df.select(selection).rename(rename)
+    df = convert_ensembl_hgvsc(df, "HGVSC")
+    df = df.join(cosmic_samples, on="COSMIC_SAMPLE_ID").drop("COSMIC_SAMPLE_ID")
+    if "consequence" in df.columns:
+        df = df.with_columns(pl.col("consequence").str.replace_all(",", ";"))
+    return df
+
+
+def get_variant_class(parser: Parser, val: str) -> str | None:
+    try:
+        var = parser.parse(val)
+        return var.posedit.edit.type
+    except HGVSParseError:
+        return None
+
+
+def main():
+    parser = Parser()
+    formatters: dict[str, Callable[[str], pl.DataFrame]] = {
+        "ProteinGym-snps-clinvar": format_proteingym_snps_clinvar,
+        "ProteinGym-indels-gnomAD": format_proteingym_indels_gnomad,
+        "ProteinGym-indels-clinvar": format_proteingym_indels_clinvar,
+        "ClinGen": format_clingen_erepo,
+        "CIViC": format_civic,
+        "COSMIC_census": format_cosmic,
+        "COSMIC_resistance": format_cosmic,
+    }
+    dfs = [
+        read_fn(SOURCES[source]).with_columns(pl.lit(source).alias("source"))
+        for source, read_fn in formatters.items()
+    ]
+    combined = (
+        pl.concat(dfs, how="diagonal_relaxed")
+        .filter(pl.col("hgvs").is_not_null())
+        .unique("hgvs")
+    ).with_columns(
+        pl.col("hgvs")
+        .map_elements(lambda x: get_variant_class(parser, x), return_dtype=pl.String)
+        .alias("variant_class"),
+        pl.col("clinsig").str.to_lowercase(),
+    )
+    failed = combined.filter(pl.col("variant_class").is_null())
+    passed = combined.filter(pl.col("variant_class").is_not_null())
+    return passed, failed
+
+
+# TODO: unify the disease definitions with MONDO
+# TODO: do not bother mapping ensembl to refseq, once you have a
+# reliable way of getting ensembl 5', 3' UTRs and CDS
+
+if __name__ == "__main__":
+    passed, failed = main()
+    passed.write_csv(here("data", "processed", "passing_variants.csv"))
+    failed.write_csv(here("data", "processed", "failed_variants.csv"))
