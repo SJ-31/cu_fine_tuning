@@ -433,7 +433,7 @@ class VariantGenerator:
     parser: Parser = field(factory=Parser)
     seqtype: Literal["aa", "dna"] = "dna"
 
-    def lookup(self, name: str, v: SequenceVariant) -> Transcript:
+    def lookup(self, name: str, v: SequenceVariant | None = None) -> Transcript:
         namespace = None
         if name.startswith("ENS"):
             namespace = "ensembl"
@@ -443,17 +443,19 @@ class VariantGenerator:
                 raise ValueError(f"Sequence for `{name}` unavailable. Reason: {reason}")
         transcript = self.db.fetch_transcript(name, namespace=namespace)
         if (
-            "datum" in dir(v.posedit.pos.start)
+            v is not None
+            and "datum" in dir(v.posedit.pos.start)
             and transcript.is_cds
             and v.posedit.pos.start.datum.name == "CDS_END"
         ):
             transcript.relative_to = "stop"
         return transcript
 
-    def _validate_var(self, v: SequenceVariant) -> None:
-        if v.type == "g":
+    def _validate_var(self, v: SequenceVariant | str) -> None:
+        vtype = v.type if isinstance(v, SequenceVariant) else v
+        if vtype == "g":
             raise VariantUnsupportedError("Cannot generate from HGVSg")
-        if v.type not in {"c", "g", "n"} and self.seqtype == "dna":
+        if vtype not in {"c", "g", "n"} and self.seqtype == "dna":
             raise VariantUnsupportedError(
                 "Can only generate DNA variants from HGVSg or HGVSc strings"
             )
@@ -608,6 +610,8 @@ class VariantGenerator:
         except (VariantUnsupportedError, ValueError, KeyError) as u:
             return False, str(u)
         except HGVSParseError as e:
+            if ("[" in hgvs) and ("]" in hgvs):
+                return False, self.gen_repeat(id, hgvs)
             return False, f"HGVS library failed to parse: {str(e)}"
 
     def gen(self, id: str, hgvs: str | SequenceVariant) -> str:
@@ -641,7 +645,7 @@ class VariantGenerator:
                 return self.extract_gene(edited, id)
             return edited
         except HGVSParseError as e:
-            if "[" in hgvs and "]" in hgvs:
+            if isinstance(hgvs, str) and ("[" in hgvs) and ("]" in hgvs):
                 return self.gen_repeat(id, hgvs)
             raise e
 
