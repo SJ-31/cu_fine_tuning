@@ -166,10 +166,13 @@ def test_seq_insert():
     assert str(s2) == "AFOOTG"
 
 
-# [2026-08-10 Mon] TODO: should add c. type tests for delins and dup too
+# [2026-08-10 Mon] TODO: should add c. type tests for delins, dup, too
+# repeats, inv
 
 
-@pytest.mark.parametrize("vtype", ["snps", "ins", "del", "delins", "dup", "repeat"])
+@pytest.mark.parametrize(
+    "vtype", ["snps", "ins", "del", "delins", "dup", "repeat", "inv"]
+)
 def test_from_csv(vtype, default_db, subtests):
     file = here("tests", "data", f"{vtype}.csv")
     db = default_db

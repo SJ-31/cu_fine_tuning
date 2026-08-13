@@ -1,0 +1,21 @@
+[project]
+name = "alt_generator"
+version = "0.01"
+dependencies = [
+  "hgvs",
+  "biocommons.seqrepo",
+  "polars",
+  "biopython",
+  "pyarrow",
+  "duckdb",
+]
+requires-python = ">=3.14"
+[tool.pyright]
+extraPaths = [
+  "/home/shannc/Bio_SDD/miniforge3/envs/ncbi/lib/python3.14/site-packages",
+]
+exclude = ["**/__pycache__"]
+typeCheckingMode = "basic"
+
+[dependency-groups]
+dev = ["pytest", "pyhere"]

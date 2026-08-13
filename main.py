@@ -538,7 +538,14 @@ class VariantGenerator:
                 del seq[pos[0]]
         return str(seq)
 
-        pass
+    def gen_inv(self, id: str, v: SequenceVariant) -> str:
+        seq: Transcript = self.lookup(id, v)
+        pos = ends(v)
+        to_insert = str(seq[pos[0] : pos[1] + 1])[::-1]
+        for _ in range(pos[1] - pos[0] + 1):
+            del seq[pos[0]]
+        seq.insert(pos[0], to_insert)
+        return str(seq)
 
     def gen_dup(self, id: str, v: SequenceVariant) -> str:
         """Generate dup variant"""
@@ -637,6 +644,8 @@ class VariantGenerator:
                 edited = self.gen_ins(id, v)
             elif vtype == "dup":
                 edited = self.gen_dup(id, v)
+            elif vtype == "inv":
+                edited = self.gen_inv(id, v)
             elif vtype == "delins":
                 edited = self.gen_delins(id, v)
             else:
