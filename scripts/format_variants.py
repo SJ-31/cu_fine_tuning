@@ -33,6 +33,34 @@ MAPPING: pl.DataFrame = (
         }
     )
 )
+MAPPING = pl.concat(
+    [
+        MAPPING,
+        pl.read_csv(
+            here("data", "mane_transcript_mapping_116_2026-08-12.tsv"), separator="\t"
+        )
+        .select(
+            [
+                "ensembl_transcript_id_version",
+                "transcript_mane_select",
+                "hgnc_symbol",
+                "transcript_len",
+            ]
+        )
+        .rename(
+            {
+                "hgnc_symbol": "symbol",
+                "ensembl_transcript_id_version": "ensembl_transcript_id",
+                "transcript_mane_select": "transcript_id",
+            }
+        )
+        .filter(
+            (pl.col("transcript_id").is_not_null())
+            & (pl.col("ensembl_transcript_id").is_not_null())
+        ),
+    ],
+    how="vertical_relaxed",
+).unique("transcript_id")
 
 
 def map_ids(
@@ -64,6 +92,21 @@ def convert_ensembl_hgvsc(df: pl.DataFrame, col: str = "hgvs") -> pl.DataFrame:
         .with_columns(hgvs=pl.col("transcript_id") + ":" + pl.col("hgvs_tmp"))
         .drop("hgvs_tmp")
         .drop("ensembl_transcript_id")
+    )
+    return df
+
+
+def extract_transcript_id(col: str, df: pl.DataFrame) -> pl.DataFrame:
+    struct_names = ["transcript_id", "hgvs_tmp"]
+    df = (
+        df.with_columns(
+            pl.col(col)
+            .str.split_exact(":", 1)
+            .struct.rename_fields(struct_names)
+            .alias("fields")
+        )
+        .unnest("fields")
+        .drop("hgvs_tmp")
     )
     return df
 
@@ -202,7 +245,7 @@ def format_proteingym_indels_gnomad(file) -> pl.DataFrame:
         )
         .rename({"SYMBOL": "symbol", "HGVSc": "hgvs"})
     )
-    df = convert_ensembl_hgvsc(df)
+    df = extract_transcript_id("hgvs", df)
     return df
 
 
@@ -296,10 +339,10 @@ def format_civic(file) -> pl.DataFrame:
         .with_columns(pl.col("hgvs").str.extract("(NM_.*):").alias("transcript_id"))
         .drop("HGVSc")
     )
-    no_hgvs = df.filter(pl.col("hgvs").is_null())
-    no_hgvs = convert_ensembl_hgvsc(no_hgvs, "HGVSc")
+    no_hgvs = df.filter(pl.col("hgvs").is_null()).drop("hgvs")
+    no_hgvs = extract_transcript_id("HGVSc", no_hgvs).rename({"HGVSc": "hgvs"})
     return (
-        pl.concat([has_hgvs, no_hgvs])
+        pl.concat([has_hgvs, no_hgvs], how="diagonal_relaxed")
         .drop("CIViC HGVS")
         .with_columns(pl.col("consequence").str.replace_all("&", ";"))
     )
@@ -318,13 +361,16 @@ def format_cosmic(file) -> pl.DataFrame:
     df: pl.DataFrame = pl.read_csv(
         file, separator="\t", infer_schema_length=None
     ).filter(pl.col("MUTATION_SOMATIC_STATUS") != "Variant of unknown origin")
-    selection = ["COSMIC_SAMPLE_ID", "HGVSC", "GENE_SYMBOL"]
-    rename = {"GENE_SYMBOL": "symbol"}
+    selection = ["COSMIC_SAMPLE_ID", "HGVSC", "GENE_SYMBOL", "TRANSCRIPT_ACCESSION"]
+    rename = {
+        "GENE_SYMBOL": "symbol",
+        "HGVSC": "hgvs",
+        "TRANSCRIPT_ACCESSION": "transcript_id",
+    }
     if "MUTATION_DESCRIPTION" in df.columns:
         selection.append("MUTATION_DESCRIPTION")
         rename["MUTATION_DESCRIPTION"] = "consequence"
     df = df.select(selection).rename(rename)
-    df = convert_ensembl_hgvsc(df, "HGVSC")
     df = df.join(cosmic_samples, on="COSMIC_SAMPLE_ID").drop("COSMIC_SAMPLE_ID")
     if "consequence" in df.columns:
         df = df.with_columns(pl.col("consequence").str.replace_all(",", ";"))
@@ -374,10 +420,6 @@ def main():
     passed = combined.filter(pl.col("variant_class").is_not_null())
     return passed, failed
 
-
-# TODO: unify the disease definitions with MONDO
-# TODO: do not bother mapping ensembl to refseq, once you have a
-# reliable way of getting ensembl 5', 3' UTRs and CDS
 
 if __name__ == "__main__":
     passed, failed = main()
