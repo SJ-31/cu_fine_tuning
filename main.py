@@ -184,7 +184,12 @@ class SeqDB:
         mapping = mapping.filter(
             (pl.col(id_col).is_not_null()) & (pl.col(alias_col).is_not_null())
         )
-        self.aliases[namespace] = dict(zip(mapping[id_col], mapping[alias_col]))
+        if namespace not in self.aliases:
+            self.aliases[namespace] = dict(zip(mapping[id_col], mapping[alias_col]))
+        else:
+            self.aliases[namespace].update(
+                dict(zip(mapping[id_col], mapping[alias_col]))
+            )
 
     @staticmethod
     def download(id: str, take_first: bool = True) -> dict[str, str]:
@@ -283,6 +288,36 @@ class SeqDB:
 
     def __contains__(self, val: str) -> bool:
         return val in self.seen
+
+    def add_transcripts_tabular(
+        self,
+        id_col: str,
+        file: str | Path,
+        cds: str = "coding",
+        full: str = "cdna",
+        fp_utr: str = "5utr",
+        tp_utr: str = "3utr",
+        missing_val: str | None = "Sequence unavailable",
+    ) -> None:
+        """
+        Add transcripts from a tabular file
+        """
+        file = Path(file) if isinstance(file, str) else file
+        if file.name.endswith(".csv"):
+            df = pl.read_csv(file)
+        else:
+            df = pl.read_csv(file, separator="\t")
+        df = df.select([id_col, fp_utr, tp_utr, cds, full])
+        if missing_val is not None:
+            df = df.with_columns(
+                *[
+                    pl.col(c).replace(missing_val, None)
+                    for c in (cds, full, fp_utr, tp_utr)
+                ]
+            )
+        df = df.filter(~pl.col(id_col).is_in(self.seen))
+        self.db.execute("INSERT INTO t SELECT * FROM df")
+        self.seen |= set(df[id_col])
 
     def add_refseq_transcripts(
         self, ids: list[str], sr: SeqRepo, mapping_key: str | None = "ensembl"

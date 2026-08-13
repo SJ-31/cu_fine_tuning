@@ -84,6 +84,20 @@ def default_db(tmp_path):
     return db
 
 
+def test_add_tabular(default_db):
+    db: m.SeqDB = default_db
+    db.add_refseq_transcripts(IDS, sr=SR)
+    db.add_transcripts_tabular(
+        id_col="ensembl_transcript_id_version",
+        file=here("tests", "data", "test_tabular_seqs.tsv"),
+    )
+    assert "ENST00000002829.8" in db.seen
+    assert "NR_104088.1" in db.seen
+    assert db.fetch("ENST00000002829.8")["full"] is not None
+    assert db.fetch("NR_104088.1")["full"] is not None
+    assert db.fetch("ENST00000216019.11")["5p_utr"] is None
+
+
 def test_seqdb(default_db):
     db: m.SeqDB = default_db
     lookup = DOWNLOADS.collect().rows_by_key("id", unique=True, named=True)
