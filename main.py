@@ -379,13 +379,17 @@ class SeqDB:
 
     def fetch(self, id: str, namespace: str | None = None) -> dict:
         if namespace is not None:
-            id = self.aliases[namespace][id]
-        fp, tp, cds, full = self.db.execute(
+            if id in self.aliases[namespace]:
+                id = self.aliases[namespace][id]
+        res = self.db.execute(
             """
         SELECT  fp_utr, tp_utr, cds, full_seq FROM t WHERE id == ?
         """,
             [id],
         ).fetchone()
+        if res is None:
+            raise KeyError(f"id {id} is not present in database")
+        fp, tp, cds, full = res
         return {"5p_utr": fp, "3p_utr": tp, "cds": cds, "full": full}
 
     def __attrs_post_init__(self):
@@ -432,7 +436,7 @@ class VariantGenerator:
         namespace = None
         if name.startswith("ENS"):
             namespace = "ensembl"
-        if name not in self.db:
+        if name not in self.db and not name.startswith("ENS"):
             added, reason = self.db.add_refseq_transcript(name, sr=self.sr)
             if not added:
                 raise ValueError(f"Sequence for `{name}` unavailable. Reason: {reason}")
@@ -522,8 +526,8 @@ class VariantGenerator:
         else:
             ref = seq[pos[0] : pos[1]]
         if ref != v_ref:
-            print(
-                f"WARNING: ref {v_ref} in variant `{v}` doesn't match ref {ref} in sequence"
+            raise ValueError(
+                f"ref {v_ref} in variant `{v}` doesn't match ref {ref} in sequence"
             )
 
     def gen_sub(self, id: str, v: SequenceVariant) -> str:
@@ -554,7 +558,7 @@ class VariantGenerator:
             self._validate_var(v)
             result = self.gen(id, hgvs=v)
             return True, result
-        except (VariantUnsupportedError, ValueError) as u:
+        except (VariantUnsupportedError, ValueError, KeyError) as u:
             return False, str(u)
         except HGVSParseError as e:
             return False, f"HGVS library failed to parse: {str(e)}"

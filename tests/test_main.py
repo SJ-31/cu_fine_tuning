@@ -96,6 +96,8 @@ def test_add_tabular(default_db):
     assert db.fetch("ENST00000002829.8")["full"] is not None
     assert db.fetch("NR_104088.1")["full"] is not None
     assert db.fetch("ENST00000216019.11")["5p_utr"] is None
+    with pytest.raises(KeyError):
+        db.fetch("FOOO")
 
 
 def test_seqdb(default_db):
