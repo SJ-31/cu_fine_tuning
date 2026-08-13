@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess as sp
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -461,8 +462,54 @@ class VariantGenerator:
         """For HGVSg variants, extract the gene subsequence"""
         raise NotImplementedError()
 
-    def gen_repeat(self, id: str, hgvs: str):
-        raise NotImplementedError()
+    def gen_repeat(self, id: str, hgvs: str) -> str:
+        seq: Transcript = self.lookup(id)
+        if "*" in hgvs:
+            seq.relative_to = "stop"
+        if "(" in hgvs:
+            raise VariantUnsupportedError("Cannot generate from uncertain sequences")
+        if ";" in hgvs:
+            raise VariantUnsupportedError("Multi-allelic repeats not supported")
+        _, hgvs = hgvs.split(":")
+        if hgvs[1] != ".":
+            raise HGVSParseError("Expected hgvs type")
+        hgvs = hgvs[2:]
+        check_mixed = len(re.findall("\\[[0-9]+\\]", hgvs)) > 1
+
+        def parse_helper(with_underscore: str, without: str) -> list:
+            if "_" in hgvs:
+                m = re.findall(with_underscore, hgvs)
+            else:
+                m = re.findall(without, hgvs)
+            if not m:
+                raise HGVSParseError("Failed to parse repeat")
+            return m
+
+        if check_mixed:
+            match = parse_helper("([*-]?[0-9]+)_[*-]?[0-9]+.*", "([*-]?[0-9]+).*")
+            repeat_start = match[0]
+            tmp = [
+                g[0] * int(g[1]) for g in re.findall("([a-zA-Z]+)\\[([0-9]+)\\]", hgvs)
+            ]
+            to_insert = "".join(tmp)
+        else:
+            match = parse_helper(
+                "([*-]?[0-9]+)_[*-]?[0-9]+([a-zA-Z]+)\\[([0-9]+)\\]",
+                "([*-]?[0-9]+)([a-zA-Z]+)\\[([0-9]+)\\]",
+            )
+            repeat_start, unit, times = match[0]
+            to_insert = unit * int(times)
+        if "_" in hgvs:
+            i1, i2 = re.findall("([*-]?[0-9]+)_([*-]?[0-9]+)", hgvs)[0]
+            i1 = int(i1[1:]) if i1.startswith("*") else int(i1)
+            i2 = int(i2[1:]) if i2.startswith("*") else int(i2)
+            to_insert = to_insert[: i2 - i1]
+        if repeat_start.startswith("*"):
+            repeat_start = int(repeat_start[1:])
+        else:
+            repeat_start = int(repeat_start)
+        seq.insert(repeat_start + 1, to_insert)
+        return str(seq)
 
     def gen_delins(self, id: str, v: SequenceVariant) -> str:
         seq: Transcript = self.lookup(id, v)

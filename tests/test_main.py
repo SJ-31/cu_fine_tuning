@@ -169,7 +169,7 @@ def test_seq_insert():
 # [2026-08-10 Mon] TODO: should add c. type tests for delins and dup too
 
 
-@pytest.mark.parametrize("vtype", ["snps", "ins", "del", "delins", "dup"])
+@pytest.mark.parametrize("vtype", ["snps", "ins", "del", "delins", "dup", "repeat"])
 def test_from_csv(vtype, default_db, subtests):
     file = here("tests", "data", f"{vtype}.csv")
     db = default_db
