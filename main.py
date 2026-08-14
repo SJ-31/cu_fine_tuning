@@ -561,7 +561,6 @@ class VariantGenerator:
         pos = ends(v)
         if pos[0] == pos[1]:
             to_dup = seq[pos[0]]
-            print("to_dup", to_dup)
             seq.insert(pos[1], to_dup)
         else:
             to_dup = seq[pos[0] : pos[1] + 1]  # inclusive range following HGVS
@@ -667,7 +666,7 @@ class VariantGenerator:
             raise e
 
 
-def spec_helper(file: str, fn: Callable, spec_name: str):
+def spec_helper(file: str, fn: Callable, spec_name: str, file_key: str = "file"):
     with open(file, "r") as f:
         lst = yaml.safe_load(f)
         if not isinstance(lst, list):
@@ -677,7 +676,7 @@ def spec_helper(file: str, fn: Callable, spec_name: str):
             if not isinstance(group, dict):
                 print(f"WARNING: item {i} of spec is not a mapping")
                 continue
-            file = group["file"]
+            file = group[file_key]
             if not Path(file).exists():
                 raise ValueError(f"file in item {i} of mapping does not exist")
             fn(**group)
@@ -686,7 +685,7 @@ def spec_helper(file: str, fn: Callable, spec_name: str):
 def main(args: dict):
     seqdb = SeqDB(file=args["database"])
     if args["alias_spec"] is not None:
-        spec_helper(args["alias_spec"], seqdb.set_aliases, "alias")
+        spec_helper(args["alias_spec"], seqdb.set_aliases, "alias", "mapping")
     if args["load_sequences"] is not None:
         spec_helper(
             args["load_sequences"], seqdb.add_transcripts_tabular, "tabular sequence"
@@ -695,11 +694,15 @@ def main(args: dict):
     sr = SeqRepo(args["seqrepo"])
     df: pl.DataFrame = pl.read_csv(args["input"])
     generator = VariantGenerator(db=seqdb, parser=parser, seqtype="dna", sr=sr)
+
+    def f(x):
+        success, seq = generator.gen_safe(x["id"], x["hgvs"])
+        return {"gen_success": success, "alt_seq": seq}
+
     result = df.with_columns(
         pl.struct(id=args["id_column"], hgvs=args["hgvs_column"])
         .map_elements(
-            lambda x: generator.gen_safe(x["id"], x["hgvs"]),
-            return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String}),
+            f, return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String})
         )
         .alias("fields")
     ).unnest("fields")
@@ -726,7 +729,7 @@ def parse_args():
     parser.add_argument("-p", "--output_passed")
     parser.add_argument("-f", "--output_failed")
     parser.add_argument(
-        "-h",
+        "-g",
         "--hgvs_column",
         default="hgvs",
         help="Column in input containing HGVS strings",
@@ -760,9 +763,7 @@ def parse_args():
         help="Column containing transcript identifiers",
         action="store",
     )
-    parser.add_argument(
-        "-i", "--input_file", default=False, help="Test", action="store_true"
-    )
+    parser.add_argument("-i", "--input", default=False, help="Test", action="store")
     args = vars(parser.parse_args())
     return args
 

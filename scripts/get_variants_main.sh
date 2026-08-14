@@ -8,7 +8,7 @@ python main.py \
 	--hgvs_column hgvs \
 	--id_col transcript_id \
 	--input data/processed/passing_variants.csv \
-	--alias_spec aliases.yml \
-	--load_sequences sequences.yml \
+	--alias_spec scripts/aliases.yml \
+	--load_sequences scripts/sequences.yml \
 	--output_passed data/processed/generated_passed.csv \
 	--output_failed data/processed/generated_failed.csv
