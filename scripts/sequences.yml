@@ -1,0 +1,7 @@
+- file: data/sequences_116_2026-08-12.tsv.gz
+  id_col: ensembl_transcript_id_version
+  missing_val: "Sequence unavailable"
+  full: cdna
+  cds: coding
+  fp_utr: 5utr
+  tp_utr: 3utr

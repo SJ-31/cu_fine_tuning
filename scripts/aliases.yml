@@ -1,0 +1,4 @@
+- file: data/mart_2026-08-03_filtered.csv
+  id_col: "RefSeq match transcript (MANE Select)"
+  alias_col: "Transcript stable ID version"
+  namespace: "ensembl"

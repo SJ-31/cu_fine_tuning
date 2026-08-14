@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess as sp
+from collections.abc import Callable
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal
@@ -12,6 +12,7 @@ from zipfile import ZipFile
 
 import duckdb
 import polars as pl
+import yaml
 from attrs import Factory, define, field
 from Bio import SeqIO
 from Bio.Seq import MutableSeq, Seq
@@ -180,8 +181,14 @@ class SeqDB:
     seen: set = field(init=False, factory=set)
 
     def set_aliases(
-        self, mapping: pl.DataFrame, id_col: str, alias_col: str, namespace: str
+        self,
+        mapping: pl.DataFrame | str | Path,
+        id_col: str,
+        alias_col: str,
+        namespace: str,
     ):
+        if not isinstance(mapping, pl.DataFrame):
+            mapping = pl.read_csv(mapping)
         mapping = mapping.filter(
             (pl.col(id_col).is_not_null()) & (pl.col(alias_col).is_not_null())
         )
@@ -403,7 +410,6 @@ class SeqDB:
             full_seq VARCHAR
         );
             """)
-
         self.seen |= {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
 
 
@@ -461,7 +467,9 @@ class VariantGenerator:
             )
 
     def extract_gene(self, edited: str, gene: str) -> str:
-        """For HGVSg variants, extract the gene subsequence"""
+        """For intron variants, extract the nearest gene subsequence"""
+        # TODO: this could work by identifying the nearest gene upstream
+        # or downstream of the intron variant
         raise NotImplementedError()
 
     def gen_repeat(self, id: str, hgvs: str) -> str:
@@ -659,8 +667,30 @@ class VariantGenerator:
             raise e
 
 
+def spec_helper(file: str, fn: Callable, spec_name: str):
+    with open(file, "r") as f:
+        lst = yaml.safe_load(f)
+        if not isinstance(lst, list):
+            print(f"WARNING: {spec_name} specification is not a list. Ignoring...")
+            return
+        for i, group in enumerate(lst):
+            if not isinstance(group, dict):
+                print(f"WARNING: item {i} of spec is not a mapping")
+                continue
+            file = group["file"]
+            if not Path(file).exists():
+                raise ValueError(f"file in item {i} of mapping does not exist")
+            fn(**group)
+
+
 def main(args: dict):
     seqdb = SeqDB(file=args["database"])
+    if args["alias_spec"] is not None:
+        spec_helper(args["alias_spec"], seqdb.set_aliases, "alias")
+    if args["load_sequences"] is not None:
+        spec_helper(
+            args["load_sequences"], seqdb.add_transcripts_tabular, "tabular sequence"
+        )
     parser = Parser()
     sr = SeqRepo(args["seqrepo"])
     df: pl.DataFrame = pl.read_csv(args["input"])
@@ -693,12 +723,34 @@ def parse_args():
         action="store",
         required=True,
     )
-    parser.add_argument("-o", "--output")
+    parser.add_argument("-p", "--output_passed")
+    parser.add_argument("-f", "--output_failed")
     parser.add_argument(
         "-h",
         "--hgvs_column",
         default="hgvs",
         help="Column in input containing HGVS strings",
+        action="store",
+    )
+    parser.add_argument(
+        "-a",
+        "--alias_spec",
+        default=None,
+        help="""
+        YAML file containing sequence aliases.
+        The format is a list of mappings with four keys:
+        - file: the path to the mapping file
+        - id_col: column in the mapping file with identifiers 
+        - alias_col: column in the mapping file with identifier aliases
+        - namespace: namespace key in sequence database to use e.g. `ensembl`
+        """,
+        action="store",
+    )
+    parser.add_argument(
+        "-l",
+        "--load_sequences",
+        default=None,
+        help="""YAML file specifying tabular files to initially load into SeqDB""",
         action="store",
     )
     parser.add_argument(
@@ -718,3 +770,5 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
     passed, failed = main(args)
+    passed.write_csv(args["output_passed"])
+    failed.write_csv(args["output_failed"])
