@@ -600,9 +600,9 @@ class VariantGenerator:
         seq[pos[0]] = v.posedit.edit.alt
         return str(seq)
 
-    def gen_safe(
-        self, id: str, hgvs: str, allow_uncertain: bool = False
-    ) -> tuple[bool, str]:
+    def safe_gen(
+        self, id: str, hgvs: str, allow_uncertain: bool = False, as_dict: bool = True
+    ) -> tuple[bool, str] | dict:
         """
         Wrapper around variant generation to ignore unsupported or failed
         variants
@@ -620,13 +620,16 @@ class VariantGenerator:
                 return False, "Variant position uncertain"
             self._validate_var(v)
             result = self.gen(id, hgvs=v)
-            return True, result
+            success, alt = True, result
         except (VariantUnsupportedError, ValueError, KeyError) as u:
-            return False, str(u)
+            success, alt = False, str(u)
         except HGVSParseError as e:
             if ("[" in hgvs) and ("]" in hgvs):
                 return False, self.gen_repeat(id, hgvs)
-            return False, f"HGVS library failed to parse: {str(e)}"
+            success, alt = False, f"HGVS library failed to parse: {str(e)}"
+        if not as_dict:
+            return success, alt
+        return {"gen_success": success, "alt_seq": alt}
 
     def gen(self, id: str, hgvs: str | SequenceVariant) -> str:
         """
@@ -695,14 +698,11 @@ def main(args: dict):
     df: pl.DataFrame = pl.read_csv(args["input"])
     generator = VariantGenerator(db=seqdb, parser=parser, seqtype="dna", sr=sr)
 
-    def f(x):
-        success, seq = generator.gen_safe(x["id"], x["hgvs"])
-        return {"gen_success": success, "alt_seq": seq}
-
     result = df.with_columns(
         pl.struct(id=args["id_column"], hgvs=args["hgvs_column"])
         .map_elements(
-            f, return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String})
+            lambda x: generator.safe_gen(x["id"], x["hgvs"], as_dict=True),
+            return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String}),
         )
         .alias("fields")
     ).unnest("fields")

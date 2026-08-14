@@ -211,6 +211,10 @@ def test_from_csv(vtype, default_db, subtests):
                         expected_score = len(generated) - len(seq)
                     elif vtype == "del":
                         expected_score = len(seq) - len(generated)
+                    elif vtype == "inv":
+                        v = HP.parse(hgvs)
+                        # v.posedit.pos.end -
+                        # expected_score =
                     assert score == expected_score
                 if pos_check and char:
                     if "-" not in pos_check:
