@@ -19,4 +19,4 @@ exclude = ["**/__pycache__"]
 typeCheckingMode = "basic"
 
 [dependency-groups]
-dev = ["pytest", "pyhere"]
+dev = ["pytest", "pyhere", "icecream"]

@@ -11,4 +11,5 @@ python main.py \
 	--alias_spec scripts/aliases.yml \
 	--load_sequences scripts/sequences.yml \
 	--output_passed data/processed/generated_passed.csv \
-	--output_failed data/processed/generated_failed.csv
+	--output_failed data/processed/generated_failed.csv \
+	--workdir data/processed/gen_wd
