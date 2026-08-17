@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import re
 import subprocess as sp
 from collections.abc import Callable
@@ -685,7 +686,38 @@ def spec_helper(file: str, fn: Callable, spec_name: str, file_key: str = "file")
             fn(**group)
 
 
+# * CLI entry
+
+
+def gen_batch(
+    generator: VariantGenerator, args: dict, batch_df: pl.DataFrame, write_prefix: int
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    wd: Path = Path(args["workdir"])
+    result = batch_df.with_columns(
+        pl.struct(id=args["id_column"], hgvs=args["hgvs_column"])
+        .map_elements(
+            lambda x: generator.safe_gen(x["id"], x["hgvs"], as_dict=True),
+            return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String}),
+        )
+        .alias("fields")
+    ).unnest("fields")
+    failed = result.filter(~pl.col("gen_success")).rename({"alt_seq": "fail_reason"})
+    passed = result.filter(pl.col("gen_success"))
+    f_write, p_write = (
+        wd / f"{write_prefix}_failed.csv",
+        wd / f"{write_prefix}_passed.csv",
+    )
+    if f_write.exists():
+        raise FileExistsError(f"File for failed entries {f_write} should not exist")
+    if p_write.exists():
+        raise FileExistsError(f"File for passing entries {p_write} should not exist")
+    passed.write_csv(p_write)
+    failed.write_csv(f_write)
+    return passed, failed
+
+
 def main(args: dict):
+    wd: Path = Path(args["workdir"])
     seqdb = SeqDB(file=args["database"])
     if args["alias_spec"] is not None:
         spec_helper(args["alias_spec"], seqdb.set_aliases, "alias", "mapping")
@@ -697,23 +729,29 @@ def main(args: dict):
     sr = SeqRepo(args["seqrepo"])
     df: pl.DataFrame = pl.read_csv(args["input"])
     generator = VariantGenerator(db=seqdb, parser=parser, seqtype="dna", sr=sr)
+    previous = list(wd.glob("*csv"))
+    if not previous:
+        start_index = 0
+    else:
+        start_index = max([int(file.stem.split("_")[0]) for file in previous]) + 1
+    id_col: str = args["id_column"]
+    attempted_ids = pl.concat([pl.read_csv(f).select(id_col) for f in previous])[
+        id_col
+    ].to_list()
 
-    result = df.with_columns(
-        pl.struct(id=args["id_column"], hgvs=args["hgvs_column"])
-        .map_elements(
-            lambda x: generator.safe_gen(x["id"], x["hgvs"], as_dict=True),
-            return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String}),
+    df = df.filter(~pl.col(id_col).is_in(attempted_ids))
+    failed_tmp, passed_tmp = [], []
+    for batch in df.iter_slices(args["save_interval"]):
+        passed, failed = gen_batch(
+            batch_df=batch, args=args, generator=generator, write_prefix=start_index
         )
-        .alias("fields")
-    ).unnest("fields")
-    failed = result.filter(~pl.col("gen_success")).rename({"alt_seq": "fail_reason"})
-    passed = result.filter(pl.col("gen_success"))
-    return passed, failed
+        failed_tmp.append(failed)
+        passed_tmp.append(passed)
+        start_index += 1
+    return pl.concat(passed_tmp), pl.concat(failed_tmp)
 
 
 def parse_args():
-    import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-s", "--seqrepo", default=None, help="seqrepo directory", required=True
@@ -755,6 +793,17 @@ def parse_args():
         default=None,
         help="""YAML file specifying tabular files to initially load into SeqDB""",
         action="store",
+    )
+    parser.add_argument(
+        "-w", "--workdir", help="Working directory to cache results", action="store"
+    )
+    parser.add_argument(
+        "-s",
+        "--save_interval",
+        default=3000,
+        help="Number of sequences to generate before saving a batch to the working directory",
+        action="store",
+        type=int,
     )
     parser.add_argument(
         "-t",
