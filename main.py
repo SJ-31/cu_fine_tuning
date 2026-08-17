@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
-
 from __future__ import annotations
+
+try:
+    from icecream import ic
+
+    ic.configureOutput("dbg: ", includeContext=True)
+except ImportError:  # Graceful fallback if IceCream isn't installed.
+    ic = lambda *a: None if not a else (a[0] if len(a) == 1 else a)  # noqa
 
 import argparse
 import re
@@ -392,7 +398,7 @@ class SeqDB:
                 id = self.aliases[namespace][id]
         res = self.db.execute(
             """
-        SELECT  fp_utr, tp_utr, cds, full_seq FROM t WHERE id == ?
+        SELECT fp_utr, tp_utr, cds, full_seq FROM t WHERE id = ?
         """,
             [id],
         ).fetchone()
@@ -694,12 +700,12 @@ def gen_batch(
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     wd: Path = Path(args["workdir"])
     result = batch_df.with_columns(
-        pl.struct(id=args["id_column"], hgvs=args["hgvs_column"])
-        .map_elements(
-            lambda x: generator.safe_gen(x["id"], x["hgvs"], as_dict=True),
-            return_dtype=pl.Struct({"gen_success": pl.Boolean, "alt_seq": pl.String}),
-        )
-        .alias("fields")
+        pl.Series(
+            [
+                generator.safe_gen(id, hgvs, as_dict=True)
+                for id, hgvs in zip(batch_df["id"], batch_df["hgvs"])
+            ]
+        ).alias("fields")
     ).unnest("fields")
     failed = result.filter(~pl.col("gen_success")).rename({"alt_seq": "fail_reason"})
     passed = result.filter(pl.col("gen_success"))
