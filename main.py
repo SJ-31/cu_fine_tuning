@@ -718,6 +718,8 @@ def gen_batch(
 
 def main(args: dict):
     wd: Path = Path(args["workdir"])
+    if not wd.exists():
+        wd.mkdir()
     seqdb = SeqDB(file=args["database"])
     if args["alias_spec"] is not None:
         spec_helper(args["alias_spec"], seqdb.set_aliases, "alias", "mapping")
@@ -735,12 +737,15 @@ def main(args: dict):
     else:
         start_index = max([int(file.stem.split("_")[0]) for file in previous]) + 1
     id_col: str = args["id_column"]
-    attempted_ids = pl.concat([pl.read_csv(f).select(id_col) for f in previous])[
-        id_col
-    ].to_list()
-
-    df = df.filter(~pl.col(id_col).is_in(attempted_ids))
-    failed_tmp, passed_tmp = [], []
+    if previous:
+        attempted_ids = pl.concat([pl.read_csv(f).select(id_col) for f in previous])[
+            id_col
+        ].to_list()
+        df = df.filter(~pl.col(id_col).is_in(attempted_ids))
+        failed_tmp = [pl.read_csv(f) for f in wd.glob("*_failed.csv")]
+        passed_tmp = [pl.read_csv(f) for f in wd.glob("*_passed.csv")]
+    else:
+        failed_tmp, passed_tmp = [], []
     for batch in df.iter_slices(args["save_interval"]):
         passed, failed = gen_batch(
             batch_df=batch, args=args, generator=generator, write_prefix=start_index
@@ -748,7 +753,9 @@ def main(args: dict):
         failed_tmp.append(failed)
         passed_tmp.append(passed)
         start_index += 1
-    return pl.concat(passed_tmp), pl.concat(failed_tmp)
+    return pl.concat(passed_tmp, how="vertical_relaxed"), pl.concat(
+        failed_tmp, how="vertical_relaxed"
+    )
 
 
 def parse_args():
@@ -798,7 +805,7 @@ def parse_args():
         "-w", "--workdir", help="Working directory to cache results", action="store"
     )
     parser.add_argument(
-        "-s",
+        "-v",
         "--save_interval",
         default=3000,
         help="Number of sequences to generate before saving a batch to the working directory",
