@@ -478,6 +478,7 @@ class VariantGenerator:
     sr: SeqRepo
     parser: Parser = field(factory=Parser)
     seqtype: Literal["aa", "dna"] = "dna"
+    bounds: tuple[int, int] = (1000, 1000)  # Bounds for genomic variants (type g)
 
     def lookup(self, name: str, v: SequenceVariant | None = None) -> ReferenceSeq:
         namespace = None
@@ -506,11 +507,26 @@ class VariantGenerator:
                 "Can only generate DNA variants from HGVSg or HGVSc strings"
             )
 
-    def extract_gene(self, edited: str, gene: str) -> str:
-        """For intron variants, extract the nearest gene subsequence"""
-        # TODO: this could work by identifying the nearest gene upstream
-        # or downstream of the intron variant
-        raise NotImplementedError()
+    def _convert_string(
+        self,
+        seq: ReferenceSeq,
+        v: SequenceVariant | tuple[str, int],
+        extra_upstream: int = 0,
+        extra_downstream: int = 0,
+    ) -> str:
+        if isinstance(v, tuple):
+            pos = v[1]
+            type = v[0]
+        else:
+            pos = v.posedit.pos.start.base
+            type = v.type
+        if type == "g":
+            return seq.window(
+                pos=pos,
+                upstream=self.bounds[0] + extra_upstream,
+                downstream=self.bounds[1] + extra_downstream,
+            )
+        return str(seq)
 
     def gen_repeat(self, id: str, hgvs: str) -> str:
         seq: ReferenceSeq = self.lookup(id)
@@ -521,6 +537,7 @@ class VariantGenerator:
         if ";" in hgvs:
             raise VariantUnsupportedError("Multi-allelic repeats not supported")
         _, hgvs = hgvs.split(":")
+        type = hgvs[0]
         if hgvs[1] != ".":
             raise HGVSParseError("Expected hgvs type")
         hgvs = hgvs[2:]
@@ -559,7 +576,9 @@ class VariantGenerator:
         else:
             repeat_start = int(repeat_start)
         seq.insert(repeat_start + 1, to_insert)
-        return str(seq)
+        return self._convert_string(
+            seq, (type, repeat_start), extra_downstream=len(to_insert)
+        )
 
     def gen_delins(self, id: str, v: SequenceVariant) -> str:
         seq: ReferenceSeq = self.lookup(id, v)
@@ -570,7 +589,7 @@ class VariantGenerator:
             for _ in range(pos[1] - pos[0] + 1):
                 del seq[pos[0]]
         seq.insert(pos[0], v.posedit.edit.alt)
-        return str(seq)
+        return self._convert_string(seq, v)
 
     def gen_del(self, id: str, v: SequenceVariant) -> str:
         """Generate del variant
@@ -584,7 +603,7 @@ class VariantGenerator:
         else:
             for _ in range(pos[1] - pos[0] + 1):
                 del seq[pos[0]]
-        return str(seq)
+        return self._convert_string(seq, v)
 
     def gen_inv(self, id: str, v: SequenceVariant) -> str:
         seq: ReferenceSeq = self.lookup(id, v)
@@ -593,7 +612,7 @@ class VariantGenerator:
         for _ in range(pos[1] - pos[0] + 1):
             del seq[pos[0]]
         seq.insert(pos[0], to_insert)
-        return str(seq)
+        return self._convert_string(seq, v)
 
     def gen_dup(self, id: str, v: SequenceVariant) -> str:
         """Generate dup variant"""
@@ -605,7 +624,7 @@ class VariantGenerator:
         else:
             to_dup = seq[pos[0] : pos[1] + 1]  # inclusive range following HGVS
             seq.insert(pos[1] + 1, to_dup)
-        return str(seq)
+        return self._convert_string(seq, v)
 
     def gen_ins(self, id: str, v: SequenceVariant) -> str:
         """
@@ -618,7 +637,7 @@ class VariantGenerator:
         if not v.posedit.pos.uncertain and pos[1] - pos[0] > 1:
             raise ValueError("Insertion range must be adjacent")
         seq.insert(pos[1], v.posedit.edit.alt)
-        return str(seq)
+        return self._convert_string(seq, v, extra_downstream=len(v.posedit.edit.alt))
 
     def _check_ref(
         self, seq: ReferenceSeq, pos: tuple[int, int], v: SequenceVariant, type: str
@@ -638,7 +657,7 @@ class VariantGenerator:
         pos = ends(v)
         self._check_ref(seq, pos, v, "sub")
         seq[pos[0]] = v.posedit.edit.alt
-        return str(seq)
+        return self._convert_string(seq, v)
 
     def safe_gen(
         self, id: str, hgvs: str, allow_uncertain: bool = False, as_dict: bool = True
