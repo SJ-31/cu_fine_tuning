@@ -755,7 +755,9 @@ def gen_batch(
         pl.Series(
             [
                 generator.safe_gen(id, hgvs, as_dict=True)
-                for id, hgvs in zip(batch_df["id"], batch_df["hgvs"])
+                for id, hgvs in zip(
+                    batch_df[args["id_column"]], batch_df[args["hgvs_column"]]
+                )
             ]
         ).alias("fields")
     ).unnest("fields")
