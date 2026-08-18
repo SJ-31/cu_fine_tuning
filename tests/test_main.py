@@ -128,7 +128,7 @@ def test_download(id):
 
 
 def test_seq_delete():
-    seq = m.Transcript.new("ATGAGACTAGACAGTGA", "fiveprime", "threeprime", "start")
+    seq = m.ReferenceSeq.new("ATGAGACTAGACAGTGA", "fiveprime", "threeprime", "start")
     old_stop = seq.end
     old_start = seq.start
     assert seq[1] == "A"
@@ -142,7 +142,7 @@ def test_seq_delete():
 
 
 def test_seq():
-    seq = m.Transcript.new("ATGAGACTAGACAGTGA", "fiveprime", "threeprime", "start")
+    seq = m.ReferenceSeq.new("ATGAGACTAGACAGTGA", "fiveprime", "threeprime", "start")
     assert seq[-1] == "e"
     assert seq[1] == "A"
     assert seq[3] == "G"
@@ -157,11 +157,20 @@ def test_seq():
     del seq[2:5]
 
 
+def test_window():
+    seq = m.ReferenceSeq.new("123456789abcdefghijk", is_cds=False)
+    assert seq.window(8, bound=3) == "56789ab"
+    assert seq.window(8, upstream=5, downstream=0) == "345678"
+    assert seq.window(8, upstream=10, downstream=0) == "12345678"
+    assert seq.window(8, upstream=10, downstream=20) == "123456789abcdefghijk"
+    assert seq.window(8, upstream=0, downstream=5) == "89abcd"
+
+
 def test_seq_insert():
-    seq = m.Transcript.new("ATG", "fp", "tp", "start")
+    seq = m.ReferenceSeq.new("ATG", "fp", "tp", "start")
     seq.insert(2, "FOO")
     assert str(seq) == "fpAFOOTGtp"
-    s2 = m.Transcript.new("ATG", is_cds=False)
+    s2 = m.ReferenceSeq.new("ATG", is_cds=False)
     s2.insert(2, "FOO")
     assert str(s2) == "AFOOTG"
 

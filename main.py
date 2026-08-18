@@ -31,9 +31,9 @@ from hgvs.sequencevariant import SequenceVariant
 
 
 @define
-class Transcript:
-    """Class representing a mutable transcript, which indexes
-    relative to the start codon, following the HGVS numbering system
+class ReferenceSeq:
+    """Class representing a mutable reference sequence, which indexes
+    following the HGVS numbering system
 
     Parameters
     ----------
@@ -107,6 +107,39 @@ class Transcript:
         else:
             for char in s[::-1]:
                 insert_char(i, char)
+
+    def window(
+        self,
+        pos: int,
+        bound: int = 1000,
+        upstream: int | None = None,
+        downstream: int | None = None,
+    ) -> str:
+        """Return a string centered on `pos`,
+        optionally with upstream and downstream sequence content
+        `pos` is interpreted with hgvs numbering
+
+        Parameters
+        ----------
+        pos : int
+            Position to center window on, which will be translated to
+            hgvs numbering
+        bound : int
+            Bound for the length of upstream and downstream sequence to
+            include. Both can be set specifically by their parameters
+
+        Returns
+        -------
+        String of self[pos - upstream:pos] + self[pos] + self[pos + 1: downstream]
+        with length upstream + downstream + 1
+
+        """
+        pos = self._shift_index(pos)
+        up = pos - (bound if upstream is None else upstream)
+        up = 0 if up < 0 else up
+        down = pos + (bound if downstream is None else downstream)
+        s = str(self)
+        return s[up:pos] + s[pos] + s[pos + 1 : down + 1]
 
     def __delitem__(self, i: int | slice):
         def d(idx: int):
@@ -381,11 +414,11 @@ class SeqDB:
                 failed[id] = comment
         return failed
 
-    def fetch_transcript(self, id: str, namespace: str | None = None) -> Transcript:
+    def fetch_transcript(self, id: str, namespace: str | None = None) -> ReferenceSeq:
         res = self.fetch(id, namespace)
         if id.startswith("NR_") and res.get("full"):
-            return Transcript.new(s=res.get("full", ""), is_cds=False)
-        return Transcript.new(
+            return ReferenceSeq.new(s=res.get("full", ""), is_cds=False)
+        return ReferenceSeq.new(
             s=res.get("cds", ""),
             five_p=res.get("5p_utr"),
             three_p=res.get("3p_utr"),
@@ -446,7 +479,7 @@ class VariantGenerator:
     parser: Parser = field(factory=Parser)
     seqtype: Literal["aa", "dna"] = "dna"
 
-    def lookup(self, name: str, v: SequenceVariant | None = None) -> Transcript:
+    def lookup(self, name: str, v: SequenceVariant | None = None) -> ReferenceSeq:
         namespace = None
         if name.startswith("ENS"):
             namespace = "ensembl"
@@ -480,7 +513,7 @@ class VariantGenerator:
         raise NotImplementedError()
 
     def gen_repeat(self, id: str, hgvs: str) -> str:
-        seq: Transcript = self.lookup(id)
+        seq: ReferenceSeq = self.lookup(id)
         if "*" in hgvs:
             seq.relative_to = "stop"
         if "(" in hgvs:
@@ -529,7 +562,7 @@ class VariantGenerator:
         return str(seq)
 
     def gen_delins(self, id: str, v: SequenceVariant) -> str:
-        seq: Transcript = self.lookup(id, v)
+        seq: ReferenceSeq = self.lookup(id, v)
         pos = ends(v)
         if pos[1] == pos[0]:
             del seq[pos[0]]
@@ -544,7 +577,7 @@ class VariantGenerator:
 
         Ranges are inclusive, following HGVS syntax
         """
-        seq: Transcript = self.lookup(id, v)
+        seq: ReferenceSeq = self.lookup(id, v)
         pos = ends(v)
         if pos[1] == pos[0]:
             del seq[pos[0]]
@@ -554,7 +587,7 @@ class VariantGenerator:
         return str(seq)
 
     def gen_inv(self, id: str, v: SequenceVariant) -> str:
-        seq: Transcript = self.lookup(id, v)
+        seq: ReferenceSeq = self.lookup(id, v)
         pos = ends(v)
         to_insert = str(seq[pos[0] : pos[1] + 1])[::-1]
         for _ in range(pos[1] - pos[0] + 1):
@@ -564,7 +597,7 @@ class VariantGenerator:
 
     def gen_dup(self, id: str, v: SequenceVariant) -> str:
         """Generate dup variant"""
-        seq: Transcript = self.lookup(id, v)
+        seq: ReferenceSeq = self.lookup(id, v)
         pos = ends(v)
         if pos[0] == pos[1]:
             to_dup = seq[pos[0]]
@@ -580,7 +613,7 @@ class VariantGenerator:
         Complex insertions (see https://hgvs-nomenclature.org/stable/recommendations/DNA/insertion/)
         currently unsupported
         """
-        seq: Transcript = self.lookup(id, v)
+        seq: ReferenceSeq = self.lookup(id, v)
         pos = ends(v)
         if not v.posedit.pos.uncertain and pos[1] - pos[0] > 1:
             raise ValueError("Insertion range must be adjacent")
@@ -588,7 +621,7 @@ class VariantGenerator:
         return str(seq)
 
     def _check_ref(
-        self, seq: Transcript, pos: tuple[int, int], v: SequenceVariant, type: str
+        self, seq: ReferenceSeq, pos: tuple[int, int], v: SequenceVariant, type: str
     ):
         v_ref = v.posedit.edit.ref
         if type == "sub":
@@ -601,7 +634,7 @@ class VariantGenerator:
             )
 
     def gen_sub(self, id: str, v: SequenceVariant) -> str:
-        seq: Transcript = self.lookup(id, v)
+        seq: ReferenceSeq = self.lookup(id, v)
         pos = ends(v)
         self._check_ref(seq, pos, v, "sub")
         seq[pos[0]] = v.posedit.edit.alt
