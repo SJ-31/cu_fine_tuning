@@ -108,8 +108,10 @@ class ReferenceSeq:
                 self._adjust_indices(shifted, 1)
             self.s.insert(shifted, c)
 
-        if len(s) == 1:
+        if len(s) == 1 and isinstance(s, str):
             insert_char(i, s)
+        elif len(s) == 1:
+            insert_char(i, str(s))
         else:
             for char in s[::-1]:
                 insert_char(i, char)
@@ -628,6 +630,8 @@ class VariantGenerator:
         to_insert = str(seq[pos[0] : pos[1] + 1])[::-1]
         for _ in range(pos[1] - pos[0] + 1):
             del seq[pos[0]]
+        if not to_insert:
+            raise ValueError(f"Range to invert for variant {v} is empty")
         seq.insert(pos[0], to_insert)
         return self._convert_string(seq, v)
 
