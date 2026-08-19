@@ -25,7 +25,7 @@ from Bio import SeqIO
 from Bio.Seq import MutableSeq, Seq
 from biocommons.seqrepo import SeqRepo
 from hgvs.exceptions import HGVSParseError
-from hgvs.location import BaseOffsetPosition
+from hgvs.location import BaseOffsetPosition, SimplePosition
 from hgvs.parser import Parser
 from hgvs.sequencevariant import SequenceVariant
 
@@ -319,7 +319,7 @@ class SeqDB:
                 return False, "could not map from Ensembl to RefSeq"
             else:
                 id = lookup[id]
-        elif id.startswith("NR_"):
+        elif id.startswith("NR_") or id.startswith("NC_"):
             fp, tp, cds = "", "", ""
             try:
                 full = sr.fetch(id)
@@ -424,7 +424,7 @@ class SeqDB:
 
     def fetch_transcript(self, id: str, namespace: str | None = None) -> ReferenceSeq:
         res = self.fetch(id, namespace)
-        if id.startswith("NR_") and res.get("full"):
+        if (id.startswith("NR_") or id.startswith("NC_")) and res.get("full"):
             return ReferenceSeq.new(s=res.get("full", ""), is_cds=False)
         return ReferenceSeq.new(
             s=res.get("cds", ""),
@@ -465,7 +465,9 @@ class VariantUnsupportedError(Exception):
     pass
 
 
-def get_pos(p: BaseOffsetPosition) -> int:
+def get_pos(p: BaseOffsetPosition | SimplePosition) -> int:
+    if isinstance(p, SimplePosition):
+        return p.base
     offset = p.offset
     if offset == 0:
         # WARNING: HGVS syntax is 1-indexed, but this is accounted for
@@ -811,16 +813,16 @@ def main(args: dict):
             hgvs_col
         ].to_list()
         df = df.filter(~pl.col(hgvs_col).is_in(attempted_hgvs))
-        failed_tmp = [pl.read_csv(f) for f in wd.glob("*_failed.csv")]
-        passed_tmp = [pl.read_csv(f) for f in wd.glob("*_passed.csv")]
+        failed_tmp = [pl.scan_csv(f) for f in wd.glob("*_failed.csv")]
+        passed_tmp = [pl.scan_csv(f) for f in wd.glob("*_passed.csv")]
     else:
         failed_tmp, passed_tmp = [], []
     for batch in df.iter_slices(args["save_interval"]):
         passed, failed = gen_batch(
             batch_df=batch, args=args, generator=generator, write_prefix=start_index
         )
-        failed_tmp.append(failed)
-        passed_tmp.append(passed)
+        failed_tmp.append(failed.lazy())
+        passed_tmp.append(passed.lazy())
         start_index += 1
     return pl.concat(passed_tmp, how="vertical_relaxed"), pl.concat(
         failed_tmp, how="vertical_relaxed"
