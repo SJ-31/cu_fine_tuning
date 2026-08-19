@@ -730,8 +730,6 @@ class VariantGenerator:
                 edited = self.gen_delins(id, v)
             else:
                 raise NotImplementedError(f"Can't generate variants of type {vtype}")
-            if v.type == "g":
-                return self.extract_gene(edited, id)
             return edited
         except HGVSParseError as e:
             if isinstance(hgvs, str) and ("[" in hgvs) and ("]" in hgvs):
@@ -807,12 +805,12 @@ def main(args: dict):
         start_index = 0
     else:
         start_index = max([int(file.stem.split("_")[0]) for file in previous]) + 1
-    id_col: str = args["id_column"]
+    hgvs_col: str = args["hgvs_column"]
     if previous:
-        attempted_ids = pl.concat([pl.read_csv(f).select(id_col) for f in previous])[
-            id_col
+        attempted_hgvs = pl.concat([pl.read_csv(f).select(hgvs_col) for f in previous])[
+            hgvs_col
         ].to_list()
-        df = df.filter(~pl.col(id_col).is_in(attempted_ids))
+        df = df.filter(~pl.col(hgvs_col).is_in(attempted_hgvs))
         failed_tmp = [pl.read_csv(f) for f in wd.glob("*_failed.csv")]
         passed_tmp = [pl.read_csv(f) for f in wd.glob("*_passed.csv")]
     else:
