@@ -85,7 +85,13 @@ class ReferenceSeq:
         self.s[self._shift_index(i)] = base
 
     def __getitem__(self, i: int | slice) -> Seq | str:
-        return self.s[self._shift_index(i)]
+        shifted = self._shift_index(i)
+        try:
+            return self.s[shifted]
+        except IndexError:
+            raise VariantUnsupportedError(
+                f"Index {shifted} is not defined for sequence of length {len(self.s)}"
+            )
 
     def _adjust_indices(self, pos_change: int, change: int):
         if pos_change < self.start:
@@ -177,6 +183,8 @@ class ReferenceSeq:
                 is_cds=False,
                 relative_to="start",
             )
+        if not s:
+            raise ValueError("CDS is missing")
         if s[:3].upper() != "ATG":
             print("WARNING: CDS has no start codon")
         if s[-3:].upper() not in {"TAG", "TGA", "TAA"}:
@@ -500,8 +508,6 @@ class VariantGenerator:
 
     def _validate_var(self, v: SequenceVariant | str) -> None:
         vtype = v.type if isinstance(v, SequenceVariant) else v
-        if vtype == "g":
-            raise VariantUnsupportedError("Cannot generate from HGVSg")
         if vtype not in {"c", "g", "n"} and self.seqtype == "dna":
             raise VariantUnsupportedError(
                 "Can only generate DNA variants from HGVSg or HGVSc strings"
@@ -680,7 +686,12 @@ class VariantGenerator:
             self._validate_var(v)
             result = self.gen(id, hgvs=v)
             success, alt = True, result
-        except (VariantUnsupportedError, ValueError, KeyError) as u:
+        except (
+            VariantUnsupportedError,
+            ValueError,
+            KeyError,
+            NotImplementedError,
+        ) as u:
             success, alt = False, str(u)
         except HGVSParseError as e:
             if ("[" in hgvs) and ("]" in hgvs):
