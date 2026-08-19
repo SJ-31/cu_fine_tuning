@@ -127,6 +127,7 @@ SOURCES = {
         RAW, "COSMIC", "Cosmic_ResistanceMutations_v104_GRCh38.tsv.gz"
     ),
     "COSMIC_census": here(RAW, "COSMIC", "Cosmic_MutantCensus_v104_GRCh38.tsv.gz"),
+    "ClinVar_introns": here(RAW, "clinvar_intron_variants_20260817_234816.tsv"),
 }
 
 
@@ -377,6 +378,27 @@ def format_cosmic(file) -> pl.DataFrame:
     return df
 
 
+def format_clinvar_intron(file) -> pl.DataFrame:
+    tmp: pl.LazyFrame = pl.scan_csv(file, separator="\t")
+    hgvs: pl.LazyFrame = pl.scan_csv(RAW / "clinvar_hgvsg.csv")
+    tmp = tmp.join(hgvs, left_on="Variation ID", right_on="Accession").rename(
+        {
+            "HGVSg": "hgvs",
+            "Genes": "symbol",
+            "Condition": "disease",
+            "Molecular consequence": "consequence",
+            "Classification": "clinsig",
+        }
+    )
+    df: pl.DataFrame = extract_transcript_id("hgvs", tmp.collect())
+    df = df.filter(pl.col("consequence") == "intron variant").with_columns(
+        pl.col("clinsig").str.strip_prefix("G: ")
+    )
+    return df.select(
+        ["hgvs", "clinsig", "symbol", "disease", "consequence", "transcript_id"]
+    )
+
+
 def get_variant_class(parser: Parser, val: str) -> str | None:
     try:
         var = parser.parse(val)
@@ -395,6 +417,7 @@ def main():
         "CIViC": format_civic,
         "COSMIC_census": format_cosmic,
         "COSMIC_resistance": format_cosmic,
+        "ClinVar_introns": format_clinvar_intron,
     }
     dfs = [
         read_fn(SOURCES[source]).with_columns(pl.lit(source).alias("source"))
@@ -415,10 +438,18 @@ def main():
         MAPPING.unique("transcript_id").select(["transcript_id", "transcript_len"]),
         on="transcript_id",
         how="left",
-    )
+    ).sort("transcript_len")
     failed = combined.filter(pl.col("variant_class").is_null())
     passed = combined.filter(pl.col("variant_class").is_not_null())
     return passed, failed
+
+
+# [2026-08-13 Thu] BUG: it seems that many ens transcript ids
+# use a previous version of ensembl (earlier than 116)
+# rerun after downloading the data for other versions
+# Backup option is to remove the transcript versions
+# - nope can't do that since some older versions may rely on GrCh37
+# so the sequence is guaranteed to be different
 
 
 if __name__ == "__main__":
