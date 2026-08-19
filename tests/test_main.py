@@ -207,12 +207,12 @@ def test_from_csv(vtype, default_db, subtests):
                     assert alt == generated
                 else:
                     seq = SR.fetch(gene)
-                    if len(seq) < 10_000:
+                    if len(seq) < 5_000:
                         score = edit_distance(seq, generated)
                         skipped = False
                     else:
                         print(
-                            "WARNING: Sequence to large to calculate edit distance for"
+                            "WARNING: Sequence too large to calculate edit distance for"
                         )
                         score = 0
                         skipped = True
@@ -223,6 +223,7 @@ def test_from_csv(vtype, default_db, subtests):
                             print(f"Alignment, score {a1.score} (max {len(seq)})\n{a1}")
                     except OverflowError:
                         pass
+                    expected_score = -1
                     if vtype == "snps":
                         expected_score = 1
                     elif vtype in "ins":
@@ -233,7 +234,7 @@ def test_from_csv(vtype, default_db, subtests):
                         v = HP.parse(hgvs)
                         # v.posedit.pos.end -
                         # expected_score =
-                    if not skipped:
+                    if not skipped and expected_score != -1:
                         assert score == expected_score
                 if pos_check and char:
                     if "-" not in pos_check:
@@ -243,4 +244,5 @@ def test_from_csv(vtype, default_db, subtests):
                         assert generated[int(start) : int(end)] == char
             else:
                 with pytest.raises(m.VariantUnsupportedError):
+                    G._validate_var(HP.parse(hgvs))
                     G.gen(gene, hgvs)

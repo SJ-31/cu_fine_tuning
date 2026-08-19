@@ -479,7 +479,10 @@ def get_pos(p: BaseOffsetPosition | SimplePosition) -> int:
 
 
 def ends(v: SequenceVariant) -> tuple[int, int]:
-    return get_pos(v.posedit.pos.start), get_pos(v.posedit.pos.end)
+    start, end = get_pos(v.posedit.pos.start), get_pos(v.posedit.pos.end)
+    if (end < 0) and (end < start) and (v.type == "c"):
+        start, end = end, start
+    return start, end
 
 
 @define
@@ -514,6 +517,12 @@ class VariantGenerator:
             raise VariantUnsupportedError(
                 "Can only generate DNA variants from HGVSg or HGVSc strings"
             )
+        if vtype == "n" and isinstance(v, SequenceVariant):
+            start, end = ends(v)
+            if start <= 0 or end <= 0:
+                raise VariantUnsupportedError(
+                    "UTR indexing is not defined for non-coding sequences"
+                )
 
     def _convert_string(
         self,
@@ -631,6 +640,8 @@ class VariantGenerator:
             seq.insert(pos[1], to_dup)
         else:
             to_dup = seq[pos[0] : pos[1] + 1]  # inclusive range following HGVS
+            if not to_dup:
+                raise ValueError("Duplicated region is empty")
             seq.insert(pos[1] + 1, to_dup)
         return self._convert_string(seq, v)
 
