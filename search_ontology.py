@@ -3,11 +3,65 @@ from pathlib import Path
 
 import duckdb
 import polars as pl
-import pronto
 import requests
 from attrs import Factory, define, field
+from pyhornedowl import PyIndexedOntology, open_ontology
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
-# obo = pronto.Ontology(file)
+
+@define
+class SearchOntology:
+    """
+    Class to search ontologies by exact label matching, from Owl files
+
+    Modified from
+    https://incenp.org/notes/2025/comparing-python-ontology-libraries.html
+    """
+
+    ont: PyIndexedOntology = field(
+        converter=lambda x: x if isinstance(x, PyIndexedOntology) else open_ontology(x)
+    )
+    prefix_name: str  # e.g. MONDO
+    prefix: str  # e.g. http://purl.obolibrary.org/obo/MONDO_
+    synonym2iri: dict[str, str] = field(factory=dict)
+
+    def __attrs_post_init__(self):
+        self.ont.add_prefix_mapping(self.prefix_name, self.prefix)
+        self.ont.add_prefix_mapping("rdfs", "http://www.w3.org/2000/01/rdf-schema#")
+        self.ont.add_prefix_mapping(
+            "oio", "http://www.geneontology.org/formats/oboInOwl#"
+        )
+        self.ont.build_indexes()
+        klasses = [c for c in self.ont.get_classes() if c.startswith(self.prefix)]
+        if not klasses:
+            raise ValueError(
+                f"No class in the ontology starts with prefix `{self.prefix}`"
+            )
+        for klass in klasses:
+            for synonym in self.ont.get_annotations(klass, "oio:hasExactSynonym"):
+                self.synonym2iri[synonym] = klass
+        if not self.synonym2iri:
+            print("WARNING: no synonyms available")
+
+    @property
+    def annotation_properties(self):
+        """
+        Return all available annotation properties in the ontology.
+
+        These can be used with `get_annotations` after the prefix
+        is registered
+        """
+        return self.ont.get_annotation_properties()
+
+    def lookup(self, s: str, as_iri: bool = False) -> str:
+        iri = self.ont.get_iri_for_label(s) or self.synonym2iri.get(s)
+        curie = self.ont.get_id_for_iri(iri)
+        if not iri or not curie:
+            raise KeyError(f"`{s}` doesn't exist as a synonym or label in the ontology")
+        if as_iri:
+            return iri
+        return curie
 
 
 @define
