@@ -8,9 +8,6 @@ import polars as pl
 import pronto
 import requests
 from attrs import Factory, define, field
-from pyhere import here
-
-file = "/home/shannc/Bio_SDD/stem_synology/chula_mount/shannc/repos/evo2_fine_tune/mondo.owl"
 
 # obo = pronto.Ontology(file)
 
@@ -61,6 +58,12 @@ class SearchOLS:
         ),
     )
 
+    def __getitem__(self, curie: str) -> pl.DataFrame:
+        return self.db.execute("SELECT * FROM t WHERE obo_id = ?", [curie]).pl()
+
+    def pl(self) -> pl.DataFrame:
+        return self.db.execute("SELECT * FROM t").pl()
+
     def __attrs_post_init__(self):
         column_str = ",".join([f"{k} {v}" for k, v in self.fields.items()])
         self.db.sql(f"""
@@ -73,8 +76,7 @@ class SearchOLS:
         self.db.sql(f"""
         CREATE TABLE IF NOT EXISTS lookups (
         query VARCHAR PRIMARY KEY,
-        obo_id VARCHAR,
-        FOREIGN KEY (obo_id) REFERENCES t(obo_id)
+        obo_id VARCHAR[],
         )
         """)
         self.seen |= set(
@@ -92,7 +94,10 @@ class SearchOLS:
         if query in self.seen:
             return self.db.execute(
                 """
-            SELECT * FROM t JOIN t lookups USING (obo_id) 
+            SELECT * FROM t
+            JOIN (SELECT query, unnest(obo_id) AS obo_id FROM lookups) AS r
+            ON t.obo_id = r.obo_id
+            WHERE r.query = ?
             """,
                 [query],
             ).pl()
@@ -108,23 +113,14 @@ class SearchOLS:
         req.raise_for_status()
         result = req.json()["response"]["docs"]
         df: pl.DataFrame = pl.DataFrame(result).select(self.columns)
-        lookups_df = df.with_columns(pl.lit(query).alias("query")).select(
-            ["query", "obo_id"]
-        )
+        lookups_df = (
+            df.with_columns(pl.lit(query).alias("query"))
+            .group_by("query")
+            .agg(pl.col("obo_id"))
+        ).select(["query", "obo_id"])
+        df = df.filter(~pl.col("obo_id").is_in(self.curies))
         self.seen.add(query)
-        self.db.execute("INSERT INTO t SELECT * FROM df")
+        if not df.is_empty():
+            self.db.execute("INSERT INTO t SELECT * FROM df")
         self.db.execute("INSERT INTO lookups SELECT * FROM lookups_df")
         return df
-
-
-foo = requests.get(
-    "https://www.ebi.ac.uk/ols4/api/search",
-    {
-        "q": "retinitis pigmentosa",
-        "ontology": ["mondo"],
-        "queryFields": ("label", "synonym"),
-    },
-)
-
-ols = SearchOLS(["mondo"], here("tests", "data", "ols.db"))
-ret = ols.search("retinitis pigmentosa")
