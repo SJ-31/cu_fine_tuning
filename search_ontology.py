@@ -53,7 +53,9 @@ class SearchOLS:
     columns: tuple[str, ...] = field(
         init=False,
         default=Factory(
-            lambda x: tuple(["obo_id", "label"] + list(x.fields.keys())),
+            lambda x: tuple(
+                ["obo_id", "label", "ontology_name"] + list(x.fields.keys())
+            ),
             takes_self=True,
         ),
     )
@@ -70,6 +72,7 @@ class SearchOLS:
         CREATE TABLE IF NOT EXISTS t (
         obo_id VARCHAR PRIMARY KEY,
         label VARCHAR,
+        ontology_name VARCHAR,
         {column_str}
         )
         """)
@@ -106,13 +109,18 @@ class SearchOLS:
             {
                 "q": query,
                 "ontology": self.ontologies,
-                "fieldList": list(self.fields.keys()) + ["obo_id", "label"],
+                "fieldList": list(self.fields.keys())
+                + ["obo_id", "label", "ontology_name"],
                 "queryFields": self.query_fields,
             },
         )
         req.raise_for_status()
         result = req.json()["response"]["docs"]
-        df: pl.DataFrame = pl.DataFrame(result).select(self.columns)
+        df: pl.DataFrame = (
+            pl.DataFrame(result)
+            .select(self.columns)
+            .filter(pl.col("ontology_name").is_in(self.ontologies))
+        )
         lookups_df = (
             df.with_columns(pl.lit(query).alias("query"))
             .group_by("query")
@@ -121,6 +129,7 @@ class SearchOLS:
         df = df.filter(~pl.col("obo_id").is_in(self.curies))
         self.seen.add(query)
         if not df.is_empty():
+            self.curies |= set(df["obo_id"])
             self.db.execute("INSERT INTO t SELECT * FROM df")
         self.db.execute("INSERT INTO lookups SELECT * FROM lookups_df")
         return df
