@@ -617,11 +617,14 @@ class VariantGenerator:
         """
         seq: ReferenceSeq = self.lookup(id, v)
         pos = ends(v)
-        if pos[1] == pos[0]:
-            del seq[pos[0]]
-        else:
-            for _ in range(pos[1] - pos[0] + 1):
+        try:
+            if pos[1] == pos[0]:
                 del seq[pos[0]]
+            else:
+                for _ in range(pos[1] - pos[0] + 1):
+                    del seq[pos[0]]
+        except IndexError:
+            raise ValueError(f"Indexing error in deletion for variant {v}")
         return self._convert_string(seq, v)
 
     def gen_inv(self, id: str, v: SequenceVariant) -> str:
@@ -839,9 +842,9 @@ def main(args: dict):
         failed_tmp.append(failed.lazy())
         passed_tmp.append(passed.lazy())
         start_index += 1
-    return pl.concat(passed_tmp, how="vertical_relaxed"), pl.concat(
-        failed_tmp, how="vertical_relaxed"
-    )
+    return pl.concat(passed_tmp, how="diagonal_relaxed").collect(), pl.concat(
+        failed_tmp, how="diagonal_relaxed"
+    ).collect()
 
 
 def parse_args():
