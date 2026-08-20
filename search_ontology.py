@@ -1,6 +1,4 @@
 #!/usr/bin/env ipython
-
-
 from pathlib import Path
 
 import duckdb
@@ -50,6 +48,8 @@ class SearchOLS:
     )
     seen: set[str] = field(factory=set)
     curies: set[str] = field(factory=set)
+    timeout = 10
+    session: requests.Session = field(factory=requests.Session)
     columns: tuple[str, ...] = field(
         init=False,
         default=Factory(
@@ -60,8 +60,12 @@ class SearchOLS:
         ),
     )
 
-    def __getitem__(self, curie: str) -> pl.DataFrame:
-        return self.db.execute("SELECT * FROM t WHERE obo_id = ?", [curie]).pl()
+    def __getitem__(self, curie: str) -> dict:
+        return (
+            self.db.execute("SELECT * FROM t WHERE obo_id = ?", [curie])
+            .pl()
+            .rows_by_key("obo_id", named=True, unique=True)[curie]
+        )
 
     def pl(self) -> pl.DataFrame:
         return self.db.execute("SELECT * FROM t").pl()
@@ -88,6 +92,17 @@ class SearchOLS:
         self.curies |= set(
             self.db.execute("SELECT obo_id FROM t").fetchnumpy()["obo_id"]
         )
+        retry = Retry(
+            total=5,
+            backoff_factor=0.5,
+            backoff_jitter=0.1,
+            status_forcelist=(429, 500, 502, 503, 504),
+            allowed_methods=frozenset(["GET"]),
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self.session.mount("https://", adapter)
+        self.session.mount("http://", adapter)
 
     def search(self, query: str) -> pl.DataFrame:
         """Search for query
@@ -104,7 +119,7 @@ class SearchOLS:
             """,
                 [query],
             ).pl()
-        req = requests.get(
+        req = self.session.get(
             f"{self.endpoint}/api/search",
             {
                 "q": query,
@@ -113,6 +128,7 @@ class SearchOLS:
                 + ["obo_id", "label", "ontology_name"],
                 "queryFields": self.query_fields,
             },
+            timeout=self.timeout,
         )
         req.raise_for_status()
         result = req.json()["response"]["docs"]
