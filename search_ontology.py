@@ -56,7 +56,7 @@ class SearchOntology:
 
     def lookup(self, s: str, as_iri: bool = False) -> str:
         iri = self.ont.get_iri_for_label(s) or self.synonym2iri.get(s)
-        curie = self.ont.get_id_for_iri(iri)
+        curie = self.ont.get_id_for_iri(iri) if iri else None
         if not iri or not curie:
             raise KeyError(f"`{s}` doesn't exist as a synonym or label in the ontology")
         if as_iri:
