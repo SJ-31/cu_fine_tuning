@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import polars as pl
+import polars.selectors as cs
 from pyhere import here
 
 sys.path.append(str(here()))
@@ -22,20 +23,23 @@ failure_file: Path = here("data", "processed", "ols_failed_lookups.txt")
 
 fill_custom = here("data", "processed", "mondo_disease_mapping_review.csv")
 
+filter_expr = (pl.col("disease").is_not_null()) & (pl.col("mondo").is_not_null())
+
 if failure_file.exists():
     failures: list = failure_file.read_text().splitlines()
 else:
     failures = []
 if tmp_file.exists():
-    mappings = pl.read_csv(tmp_file).filter(
-        (pl.col("disease").is_not_null()) & (pl.col("mondo").is_not_null())
-    )
+    mappings = pl.read_csv(tmp_file).filter(filter_expr)
     if fill_custom.exists():
-        mappings = pl.concat([mappings, pl.read_csv(fill_custom)])
+        mappings = pl.concat([mappings, pl.read_csv(fill_custom).filter(filter_expr)])
 else:
     mappings = pl.DataFrame({"disease": [], "mondo": []})
+
+source: Path = here("data", "processed", "passing_variants.csv")
+
 df = (
-    pl.scan_csv(here("data", "processed", "passing_variants.csv"))
+    pl.scan_csv(source)
     .select("disease")
     .collect()
     .filter(pl.col("disease").is_not_null())
@@ -109,3 +113,29 @@ lookups_left.filter(
     & (~pl.col("disease").is_in(case_same["disease"]))
 ).write_csv(fill_custom)
 failure_file.write_text("\n".join(failures))
+
+mappings_lookup: dict = mappings.rows_by_key("disease", named=True, unique=True)
+
+changed: pl.DataFrame = (
+    pl.read_csv(source)
+    .with_columns(
+        pl.col("disease")
+        .str.split(";")
+        .list.eval(pl.element().str.replace_all("_", " "))
+    )
+    .explode("disease")
+    .with_columns(
+        pl.col("disease")
+        .map_elements(
+            lambda x: mappings_lookup.get(x, {}).get("mondo"), return_dtype=pl.String
+        )
+        .alias("mondo")
+    )
+    .group_by("hgvs")
+    .agg(
+        cs.by_name(["disease", "mondo"]),
+        cs.exclude(cs.by_name(["disease", "mondo"])).first(),
+    )
+    .with_columns(cs.by_name(["disease", "mondo"]).list.join(";"))
+)
+changed.write_csv(here("data", "processed", "passing_variants_mondo.csv"))
