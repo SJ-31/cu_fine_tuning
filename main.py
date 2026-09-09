@@ -805,9 +805,11 @@ class SnpSpace(AliasedDB):
             locs = set(results.select(["alt", "pos"]).iter_rows())
             self.af = {
                 k: v[0]
-                for k, v in results.rows_by_key(["id", "alt", "pos"], unique=True)
+                for k, v in results.rows_by_key(
+                    ["id", "alt", "pos"], unique=True
+                ).items()
             }
-            if not results:
+            if results.height == 0:
                 return set()
             self.cache[id] = locs
         return self.cache[id]
