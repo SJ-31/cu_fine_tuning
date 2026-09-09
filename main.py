@@ -776,6 +776,80 @@ def spec_helper(file: str, fn: Callable, spec_name: str, file_key: str = "file")
             fn(**group)
 
 
+# * Adding benign variation
+
+
+@define
+class SnpSpace(AliasedDB):
+    """
+    Class representing the space of allowed SNPs for transcript sequences
+    Each unique transcript id has its own mutation space
+    """
+
+    cache: dict[str, set[tuple[str, int]]] = field(init=False, factory=dict)
+
+    def lookup(self, id: str, namespace: str | None = None) -> set:
+        """Retrieve mutation space for `id`, caching for future lookups"""
+        if namespace is not None:
+            if id in self.aliases[namespace]:
+                id = self.aliases[namespace][id]
+        if id not in self.cache:
+            results = self.db.execute(
+                "SELECT alt, pos FROM t WHERE id = ?", [id]
+            ).fetchall()
+            if not results:
+                return set()
+            self.cache[id] = set(results)
+        return self.cache[id]
+
+    def __attrs_post_init__(self):
+        self.db.sql("""
+        CREATE TABLE IF NOT EXISTS t (
+        id VARCHAR,
+        pos INTEGER,
+        alt VARCHAR
+        )
+        """)
+        self.seen |= {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
+
+    def add(
+        self,
+        id: str,
+        hgvs: list[str],
+        parser: Parser,
+        namespace: str | None = None,
+    ) -> None:
+        """
+        Add a set of allowed variants for `id`
+
+        Parameters
+        ----------
+        hgvs : list[str]
+            List of HGVS strings. Only HGVSc, HGVSn, HGVSg are allowed
+        """
+        tmp = {"id": [], "pos": [], "alt": []}
+        current: set = self.lookup(id, namespace=namespace)
+        for variant in hgvs:
+            v: SequenceVariant = parser.parse(variant)
+            if v.posedit.length_change() != 0:
+                print(f"WARNING: only SNVs allowed. Ignoring {variant}")
+                continue
+            if v.ac != "id":
+                print(f"WARNING: id {id} and variant accession {v.ac} don't match")
+            mut = (v.posedit.edit.alt, v.posedit.pos.start)
+            if mut not in current:
+                tmp["id"].append(id)
+                tmp["alt"].append(v.posedit.edit.alt)
+                tmp["pos"].append(v.posedit.pos.start)
+        df = pl.DataFrame(tmp)
+        self.db.execute("INSERT INTO t SELECT * FROM df")
+
+    def allowed(self, id: str, mutation: tuple[str, int], namespace: str | None = None):
+        """
+        Check whether a mutation for `id` is allowed
+        """
+        return mutation in self.lookup(id, namespace=namespace)
+
 # * CLI entry
 
 
