@@ -246,3 +246,30 @@ def test_from_csv(vtype, default_db, subtests):
                 with pytest.raises(m.VariantUnsupportedError):
                     m.validate_var(HP.parse(hgvs), G.seqtype)
                     G.gen(gene, hgvs)
+
+
+def test_snpspace(tmp_path):
+    db_file = tmp_path / "snps.db"
+    space = m.SnpSpace(file=db_file)
+    space.set_aliases(
+        pl.read_csv(here("data", "mart_2026-08-03_filtered.csv")),
+        id_col="RefSeq match transcript (MANE Select)",
+        alias_col="Transcript stable ID version",
+        namespace="ensembl",
+    )
+    id1 = "NM_033360.4"
+    space.add(
+        id1,
+        [
+            "NM_033360.4(KRAS):c.*4619T>C",
+            "NM_033360.4(KRAS):c.*4200T>A",
+            "NM_033360.4(KRAS):c.-18A>G",
+        ],
+        sdb=m.SeqDB(here("data", "all_seqs.db")),
+        parser=HP,
+    )
+    assert space.allowed(id1, ("G", 190 - 18))
+    assert not space.allowed(id1, ("A", 190 - 18))
+    assert not space.allowed(id1, ("G", 190 - 17))
+    assert space.allowed(id1, ("C", 4619 + 759))
+    assert space.allowed(id1, ("A", 4200 + 759))

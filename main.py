@@ -831,18 +831,32 @@ class SnpSpace(AliasedDB):
         """
         tmp = {"id": [], "pos": [], "alt": []}
         current: set = self.lookup(id, namespace=namespace)
+        seq = sdb.fetch_transcript(id, namespace=namespace)
         for variant in hgvs:
             v: SequenceVariant = parser.parse(variant)
+            validate_var(v, "dna")
             if v.posedit.length_change() != 0:
                 print(f"WARNING: only SNVs allowed. Ignoring {variant}")
                 continue
-            if v.ac != "id":
+            start, stop = ends(v)
+            if v.ac != id:
                 print(f"WARNING: id {id} and variant accession {v.ac} don't match")
-            mut = (v.posedit.edit.alt, v.posedit.pos.start)
+            if (
+                seq.is_cds
+                and v.type == "c"
+                and "datum" in dir(v.posedit.pos.start)
+                and v.posedit.pos.start.datum.name == "CDS_END"
+            ):
+                pos = seq._shift_index(start, relative="stop")
+            elif seq.is_cds and v.type == "c" and start < 0:
+                pos = seq._shift_index(start)
+            else:
+                pos = start
+            mut = (v.posedit.edit.alt, pos)
             if mut not in current:
                 tmp["id"].append(id)
                 tmp["alt"].append(v.posedit.edit.alt)
-                tmp["pos"].append(v.posedit.pos.start)
+                tmp["pos"].append(pos)
         df = pl.DataFrame(tmp)
         self.db.execute("INSERT INTO t SELECT * FROM df")
 
