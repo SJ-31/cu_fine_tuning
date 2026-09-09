@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import numpy as np
+
 try:
     from icecream import ic
 
@@ -522,6 +524,7 @@ class VariantGenerator:
             if not added:
                 raise ValueError(f"Sequence for `{name}` unavailable. Reason: {reason}")
         transcript = self.db.fetch_transcript(name, namespace=namespace)
+        # transcript = add_variation(transcript)
         if (
             v is not None
             and "datum" in dir(v.posedit.pos.start)
@@ -876,7 +879,7 @@ class SnpSpace(AliasedDB):
                 if given_af:
                     tmp["af"].append(f)
                 else:
-                    tmp["af"].append(np.nan)
+                    tmp["af"].append(None)
         df = pl.DataFrame(tmp)
         self.db.execute("INSERT INTO t SELECT * FROM df")
 
@@ -885,6 +888,27 @@ class SnpSpace(AliasedDB):
         Check whether a mutation for `id` is allowed
         """
         return mutation in self.lookup(id, namespace=namespace)
+
+
+def add_variation(
+    id: str,
+    space: SnpSpace,
+    seq: ReferenceSeq,
+    namespace: str | None = None,
+    rng: np.random.Generator | None = None,
+    default_af: float = 0.2,
+) -> None:
+    old_relation = seq.relative_to
+    rng = rng or np.random.default_rng()
+    seq.relative_to = None
+    cur_space = space.lookup(id, namespace=namespace)
+    for mutation in cur_space:
+        alt, pos = mutation
+        af = space.af[(id,) + mutation] or default_af
+        if rng.uniform(0, 1) < af:
+            seq[pos] = alt
+    seq.relative_to = old_relation
+
 
 # * CLI entry
 
@@ -990,7 +1014,7 @@ def parse_args():
         YAML file containing sequence aliases.
         The format is a list of mappings with four keys:
         - file: the path to the mapping file
-        - id_col: column in the mapping file with identifiers 
+        - id_col: column in the mapping file with identifiers
         - alias_col: column in the mapping file with identifier aliases
         - namespace: namespace key in sequence database to use e.g. `ensembl`
         """,
