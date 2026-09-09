@@ -222,7 +222,7 @@ class ReferenceSeq:
 
 
 @define
-class SeqDB:
+class AliasedDB:
     file: Path
     aliases: dict[str, dict[str, str]] = field(factory=dict)
     db: duckdb.DuckDBPyConnection = field(
@@ -249,6 +249,9 @@ class SeqDB:
                 dict(zip(mapping[id_col], mapping[alias_col]))
             )
 
+
+@define
+class SeqDB(AliasedDB):
     @staticmethod
     def download(id: str, take_first: bool = True) -> dict[str, str]:
         """Download RefSeq sequence given by `id` with NCBI datasets.
