@@ -789,19 +789,24 @@ class SnpSpace(AliasedDB):
     """
 
     cache: dict[str, set[tuple[str, int]]] = field(init=False, factory=dict)
+    af: dict[tuple[str, str, int], float] = field(init=False, factory=dict)
 
-    def lookup(self, id: str, namespace: str | None = None) -> set:
+    def lookup(self, id: str, namespace: str | None = None) -> set[tuple[str, int]]:
         """Retrieve mutation space for `id`, caching for future lookups"""
         if namespace is not None:
             if id in self.aliases[namespace]:
                 id = self.aliases[namespace][id]
+        query = "SELECT id, alt, pos, af FROM t WHERE id = ?"
         if id not in self.cache:
-            results = self.db.execute(
-                "SELECT alt, pos FROM t WHERE id = ?", [id]
-            ).fetchall()
+            results = self.db.execute(query, [id]).pl()
+            locs = set(results.select(["alt", "pos"]).iter_rows())
+            self.af = {
+                k: v[0]
+                for k, v in results.rows_by_key(["id", "alt", "pos"], unique=True)
+            }
             if not results:
                 return set()
-            self.cache[id] = set(results)
+            self.cache[id] = locs
         return self.cache[id]
 
     def __attrs_post_init__(self):
@@ -809,17 +814,22 @@ class SnpSpace(AliasedDB):
         CREATE TABLE IF NOT EXISTS t (
         id VARCHAR,
         pos INTEGER,
-        alt VARCHAR
+        alt VARCHAR,
+        af FLOAT
         )
         """)
-        self.seen |= {p[0] for p in self.db.execute("SELECT id FROM t").fetchall()}
+
+        # in the context of CDS, `pos` indexes into the complete strand,
+        # i.e. 0 is the 5' UTR start
 
     def add(
         self,
         id: str,
         hgvs: list[str],
+        sdb: SeqDB,
         parser: Parser,
         namespace: str | None = None,
+        af: list[float] | None = None,
     ) -> None:
         """
         Add a set of allowed variants for `id`
@@ -828,11 +838,17 @@ class SnpSpace(AliasedDB):
         ----------
         hgvs : list[str]
             List of HGVS strings. Only HGVSc, HGVSn, HGVSg are allowed
+        af : list[float] | None
+            Optional allele frequencies for each mutation
         """
-        tmp = {"id": [], "pos": [], "alt": []}
+        tmp = {"id": [], "pos": [], "alt": [], "af": []}
         current: set = self.lookup(id, namespace=namespace)
         seq = sdb.fetch_transcript(id, namespace=namespace)
-        for variant in hgvs:
+        given_af: bool = af is not None
+        if af is not None:
+            assert len(af) == len(hgvs), "Provided AF must be the same length as HGVS"
+        freqs = af or range(len(hgvs))
+        for variant, f in zip(hgvs, freqs):
             v: SequenceVariant = parser.parse(variant)
             validate_var(v, "dna")
             if v.posedit.length_change() != 0:
@@ -857,6 +873,10 @@ class SnpSpace(AliasedDB):
                 tmp["id"].append(id)
                 tmp["alt"].append(v.posedit.edit.alt)
                 tmp["pos"].append(pos)
+                if given_af:
+                    tmp["af"].append(f)
+                else:
+                    tmp["af"].append(np.nan)
         df = pl.DataFrame(tmp)
         self.db.execute("INSERT INTO t SELECT * FROM df")
 
