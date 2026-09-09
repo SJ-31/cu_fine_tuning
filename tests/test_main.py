@@ -244,5 +244,5 @@ def test_from_csv(vtype, default_db, subtests):
                         assert generated[int(start) : int(end)] == char
             else:
                 with pytest.raises(m.VariantUnsupportedError):
-                    G._validate_var(HP.parse(hgvs))
+                    m.validate_var(HP.parse(hgvs), G.seqtype)
                     G.gen(gene, hgvs)

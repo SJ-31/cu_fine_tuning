@@ -60,18 +60,19 @@ class ReferenceSeq:
     is_cds: bool
     relative_to: Literal["start", "stop", None] = "start"
 
-    def _shift_index(self, i: int | slice) -> int | slice:
-        if self.relative_to == "none":
+    def _shift_index(self, i: int | slice, relative: str | None = None) -> int | slice:
+        r = relative or self.relative_to
+        if r == "none":
             return i
         if i == 0:
             raise ValueError("Base index of 0 is not defined")
         elif (
             (isinstance(i, int) and i <= 0) or (isinstance(i, slice) and i.start <= 0)
-        ) and self.relative_to == "stop":
+        ) and r == "stop":
             raise ValueError(
                 "Negative indexing is not defined when relative to the stop codon"
             )
-        offset = self.start if self.relative_to == "start" else self.end + 1
+        offset = self.start if r == "start" else self.end + 1
         if isinstance(i, int):
             if i < 0:
                 i += 1
@@ -490,6 +491,20 @@ def ends(v: SequenceVariant) -> tuple[int, int]:
     return start, end
 
 
+def validate_var(v: SequenceVariant | str, seqtype: str) -> None:
+    vtype = v.type if isinstance(v, SequenceVariant) else v
+    if vtype not in {"c", "g", "n"} and seqtype == "dna":
+        raise VariantUnsupportedError(
+            "Can only generate DNA variants from HGVSg or HGVSc strings"
+        )
+    if vtype == "n" and isinstance(v, SequenceVariant):
+        start, end = ends(v)
+        if start <= 0 or end <= 0:
+            raise VariantUnsupportedError(
+                "UTR indexing is not defined for non-coding sequences"
+            )
+
+
 @define
 class VariantGenerator:
     db: SeqDB
@@ -515,19 +530,6 @@ class VariantGenerator:
         ):
             transcript.relative_to = "stop"
         return transcript
-
-    def _validate_var(self, v: SequenceVariant | str) -> None:
-        vtype = v.type if isinstance(v, SequenceVariant) else v
-        if vtype not in {"c", "g", "n"} and self.seqtype == "dna":
-            raise VariantUnsupportedError(
-                "Can only generate DNA variants from HGVSg or HGVSc strings"
-            )
-        if vtype == "n" and isinstance(v, SequenceVariant):
-            start, end = ends(v)
-            if start <= 0 or end <= 0:
-                raise VariantUnsupportedError(
-                    "UTR indexing is not defined for non-coding sequences"
-                )
 
     def _convert_string(
         self,
@@ -706,7 +708,7 @@ class VariantGenerator:
             v: SequenceVariant = self.parser.parse(hgvs)
             if v.posedit.pos.uncertain and not allow_uncertain:
                 return False, "Variant position uncertain"
-            self._validate_var(v)
+            validate_var(v, self.seqtype)
             result = self.gen(id, hgvs=v)
             success, alt = True, result
         except (
