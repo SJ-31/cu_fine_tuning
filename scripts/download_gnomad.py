@@ -5,7 +5,7 @@ from pathlib import Path
 
 import polars as pl
 from gql import Client, GraphQLRequest, gql
-from gql.transport.aiohttp import AIOHTTPTransport
+from gql.transport.requests import RequestsHTTPTransport
 from hgvs.parser import Parser
 from pyhere import here
 
@@ -32,7 +32,13 @@ SDB.set_aliases(
 )
 MAPPING: dict = SDB.aliases["ensembl"]
 
-TRANSPORT = AIOHTTPTransport(url="https://gnomad.broadinstitute.org/api")
+
+TRANSPORT = RequestsHTTPTransport(
+    url="https://gnomad.broadinstitute.org/api",
+    retries=3,
+    retry_backoff_factor=1,
+    retry_status_forcelist=(429, 500, 502, 503, 504),
+)
 CLIENT = Client(transport=TRANSPORT, fetch_schema_from_transport=True)
 
 
@@ -82,9 +88,6 @@ def create_query(symbol: str) -> GraphQLRequest:
     }
     """
     return gql(query.replace("_TMP_", symbol))
-
-
-# TODO: make the calls more efficient
 
 
 def get_filter_variants(symbol: str) -> tuple[bool, pl.DataFrame]:
