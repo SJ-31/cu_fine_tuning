@@ -144,6 +144,28 @@ def main():
         .collect()
         .select(["transcript_id", "hgvs"])
     )
+    # get from dbSNP
+    dbsnp_hgvsc = pl.read_csv(
+        here("data", "processed", "dbSNP_benign_formatted.csv"), null_values="NA"
+    )
+    dbsnp = (
+        pl.scan_csv(here("data", "raw", "dbSNP_benign.tsv"), separator="\t")
+        .select(["id", "freq", "hgvs"])
+        .with_columns(pl.col("hgvs").str.split(","))
+        .explode("hgvs")
+        .filter(pl.col("hgvs").is_in(dbsnp_hgvsc["query"]))
+        .with_columns(pl.col(""))
+        .collect()
+    )
+    dbsnp = (
+        dbsnp.join(dbsnp_hgvsc, left_on="hgvs", right_on="query")
+        .join(pl.read_csv(here("data", "processed", "dbSNP_benign_af.csv")), on="id")
+        .select(["id", "HGVSt", "af"])
+        .rename({"id": "transcript_id", "HGVSt": "hgvs"})
+        .filter(pl.col("hgvs").is_not_null())
+    )
+
+    # get from gnomAD
     symbols_to_get: list = (
         generated.filter(pl.col("symbol").is_not_null())
         .select("symbol")
@@ -151,11 +173,13 @@ def main():
         .unique()
         .to_list()
     )
+
     failed_file = OUT / "failed.txt"
     if failed_file.exists():
         failed_symbols = (OUT / "failed.txt").read_text().splitlines()
     else:
         failed_symbols = []
+
     dfs = []
     for symbol in symbols_to_get:
         file = OUT / f"{symbol}.csv"
@@ -167,6 +191,7 @@ def main():
                 failed_symbols.append(symbol)
                 failed_file.write_text("\n".join(failed_symbols))
     all_hgvs = pl.concat([from_generated] + dfs, how="diagonal_relaxed")
+
     parser = Parser()
     for group, hgvs_df in all_hgvs.group_by("transcript_id"):
         id = group[0]
