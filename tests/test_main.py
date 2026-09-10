@@ -273,3 +273,13 @@ def test_snpspace(tmp_path):
     assert not space.allowed(id1, ("G", 190 - 17))
     assert space.allowed(id1, ("C", 4619 + 759))
     assert space.allowed(id1, ("A", 4200 + 759))
+
+
+def test_mutation_rates():
+    data = pl.read_csv(here("data", "gnomad.v4.1.1.mutation_rate.tsv"), separator="\t")
+    mr = m.MutationRates.new(
+        data, n_down=1, n_up=1, rate_col="mu", context_col="context", alt_col="alt"
+    )
+    test = m.ReferenceSeq.new("AAATACGACTAGCCCGATCGAT", relative_to=None)
+    print(mr.rate(test, pos=1, alt="C"))
+    assert mr.rate(test, pos=1, alt="C") == 1.8424e-09

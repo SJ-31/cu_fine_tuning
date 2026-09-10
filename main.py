@@ -64,7 +64,7 @@ class ReferenceSeq:
 
     def _shift_index(self, i: int | slice, relative: str | None = None) -> int | slice:
         r = relative or self.relative_to
-        if r == "none":
+        if r == "none" or r is None:
             return i
         if i == 0:
             raise ValueError("Base index of 0 is not defined")
@@ -892,6 +892,56 @@ class SnpSpace(AliasedDB):
         return mutation in self.lookup(id, namespace=namespace)
 
 
+@define
+class MutationRates:
+    """
+    Class to compute mutation rates from sequence context
+
+    Parameters
+    ----------
+    n_up : int
+        Number of bases upstream of a position to include
+    n_down : int
+        Number of bases downstream of a position to include
+    rate_map : dict[tuple[str, str], float]
+        Mapping of (motif, alt char) -> probability of mutation
+    """
+
+    rate_map: dict[tuple[str, str], float]
+    n_up: int = 0
+    n_down: int = 0
+
+    @classmethod
+    def new(
+        cls,
+        data: pl.DataFrame,
+        n_up: int,
+        n_down: int,
+        context_col: str = "context",
+        alt_col: str = "alt",
+        rate_col: str = "rate",
+    ) -> MutationRates:
+        rate_map = {
+            k: v[0]
+            for k, v in data.select([context_col, alt_col, rate_col])
+            .rows_by_key((context_col, alt_col), unique=True)
+            .items()
+        }
+        return cls(n_up=n_up, n_down=n_down, rate_map=rate_map)
+
+    def rate(self, seq: ReferenceSeq, pos: int, alt: str) -> float | None:
+        """
+        Return the probability of the base at `pos` in `seq` mutating
+        into `alt`
+        """
+        motif = str(seq[pos])
+        if self.n_up:
+            motif = str(seq[pos - self.n_up : pos]) + motif
+        if self.n_down:
+            motif = motif + str(seq[pos + 1 : pos + self.n_down + 1])
+        return self.rate_map.get((motif, alt), np.nan)
+
+
 def add_variation(
     id: str,
     space: SnpSpace,
@@ -899,6 +949,7 @@ def add_variation(
     namespace: str | None = None,
     rng: np.random.Generator | None = None,
     default_af: float = 0.2,
+    rates: MutationRates | None = None,
 ) -> None:
     old_relation = seq.relative_to
     rng = rng or np.random.default_rng()
@@ -906,7 +957,11 @@ def add_variation(
     cur_space = space.lookup(id, namespace=namespace)
     for mutation in cur_space:
         alt, pos = mutation
-        af = space.af[(id,) + mutation] or default_af
+        af = space.af.get((id,) + mutation)
+        if not af and rates is not None:
+            af = rates.rate(seq, pos, alt) or default_af
+        else:
+            af = default_af
         if rng.uniform(0, 1) < af:
             seq[pos] = alt
     seq.relative_to = old_relation
